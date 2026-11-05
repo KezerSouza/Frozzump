@@ -3,7 +3,7 @@
 // => bump SIM_VERSION (and the leaderboard becomes a new one).
 // ─────────────────────────────────────────────────────────────
 
-export const SIM_VERSION = 6;
+export const SIM_VERSION = 7;
 
 export const TICK_RATE = 120;
 export const DT = 1 / TICK_RATE;
@@ -19,7 +19,7 @@ export const IN_RIGHT = 2;
 // The time constant is 1/DRAG: ~63% of v_max after 1/DRAG s, ~95% after 3/DRAG s.
 export const THRUST = 13; //             m/s²
 export const DRAG_TRACK = 0.8; //      1/s  -> v_max = 16.25 m/s, ~95% at ≈3.75 s
-export const DRAG_SNOW = 2.0; //      1/s  -> v_max = 6.5 m/s (deep snow, 40% of normal)
+export const DRAG_SNOW = 2.5; //      1/s  -> v_max = 5.2 m/s (deep snow, 32% of normal)
 
 // Lateral grip. Factor per tick = 1 - grip * DT
 // (plain arithmetic on purpose: no Math.exp in the simulation).
