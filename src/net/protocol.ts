@@ -60,6 +60,16 @@ export interface ResetMsg {
   t: "reset";
 }
 
+/** Keep-alive so the host can detect a browser that closed/crashed abruptly. */
+export interface PingMsg {
+  t: "ping";
+}
+
+/** Explicit, clean "I'm leaving" (sent on tab close via beforeunload). */
+export interface ByeMsg {
+  t: "bye";
+}
+
 // ── Host → Client ──────────────────────────────────────────────
 
 /** Host accepts the client, assigns color, and sends the current roster. */
@@ -83,6 +93,16 @@ export interface RosterMsg {
   players: PlayerInfo[];
 }
 
+/** Host → clients keep-alive, and a signal the room is still alive. */
+export interface HostPingMsg {
+  t: "hping";
+}
+
+/** Host is shutting down the room (host closed the tab). */
+export interface RoomClosedMsg {
+  t: "closed";
+}
+
 /** A player's input batch, relayed by the host to everyone else. */
 export interface RelayInputMsg {
   t: "rinput";
@@ -103,15 +123,21 @@ export interface LeaderboardMsg {
   leaderboard: LeaderEntry[];
 }
 
-export type ClientMsg = HelloMsg | InputMsg | FinishMsg | ResetMsg;
+export type ClientMsg = HelloMsg | InputMsg | FinishMsg | ResetMsg | PingMsg | ByeMsg;
 export type HostMsg =
   | WelcomeMsg
   | RejectMsg
   | RosterMsg
   | RelayInputMsg
   | RelayResetMsg
-  | LeaderboardMsg;
+  | LeaderboardMsg
+  | HostPingMsg
+  | RoomClosedMsg;
 export type NetMsg = ClientMsg | HostMsg;
+
+/** Heartbeat interval and the timeout after which a silent peer is dropped. */
+export const HEARTBEAT_MS = 2000;
+export const PEER_TIMEOUT_MS = 6000; // ~3 missed heartbeats
 
 /** 15 visually distinct car colors (max connections = 15). */
 export const PALETTE: string[] = [

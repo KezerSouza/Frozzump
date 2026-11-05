@@ -5,6 +5,14 @@ const MAP: Record<string, number> = {
   ArrowRight: IN_RIGHT, KeyD: IN_RIGHT,
 };
 
+/** True when the user is typing into a form field (lobby nickname, room code, …). */
+function isTyping(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el) return false;
+  const tag = el.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable;
+}
+
 export class Keys {
   private mask = 0;
   onRestart: () => void = () => {};
@@ -13,6 +21,8 @@ export class Keys {
 
   constructor() {
     window.addEventListener("keydown", (e) => {
+      // let text fields (e.g. the lobby nickname) receive A/D/arrows normally
+      if (isTyping(e.target)) return;
       const bit = MAP[e.code];
       if (bit !== undefined) {
         this.mask |= bit;
@@ -22,6 +32,7 @@ export class Keys {
       else if (e.code === "KeyO" && !e.repeat) this.onToggleOthers();
     });
     window.addEventListener("keyup", (e) => {
+      if (isTyping(e.target)) return;
       const bit = MAP[e.code];
       if (bit !== undefined) this.mask &= ~bit;
     });

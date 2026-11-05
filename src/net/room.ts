@@ -14,9 +14,11 @@
 import { Peer, type DataConnection } from "peerjs";
 import { TOTAL_LAPS, fromBase64, decodeReplay, verifyReplay, OVAL_1 } from "../sim";
 import {
+  HEARTBEAT_MS,
   LOCAL_SIM_VERSION,
   MAX_PLAYERS,
   PALETTE,
+  PEER_TIMEOUT_MS,
   PROTOCOL_VERSION,
   codeToPeerId,
   isNetMsg,
@@ -39,6 +41,8 @@ export interface RoomEvents {
   onLeaderboard?: (entries: LeaderEntry[]) => void;
   onRemoteInput?: (batch: RemoteInputBatch) => void;
   onRemoteReset?: (id: PlayerId) => void;
+  /** A remote player left (disconnect / closed tab / timeout) — drop their car. */
+  onRemoteLeave?: (id: PlayerId) => void;
   onSelf?: (self: PlayerInfo) => void;
   onError?: (message: string) => void;
   onStatus?: (status: RoomStatus) => void;
@@ -52,6 +56,10 @@ export class Room {
   private peer: Peer;
   private events: RoomEvents;
   private self: PlayerInfo | null = null;
+  private heartbeat: ReturnType<typeof setInterval> | null = null;
+  private lastSeen = new Map<PlayerId, number>(); // host: last activity per client
+  private hostLastSeen = 0; // client: last time we heard from the host
+  private destroyed = false;
 
   // host-only state
   private conns = new Map<PlayerId, DataConnection>();
@@ -97,6 +105,7 @@ export class Room {
       this.events.onSelf?.(this.self);
       this.events.onRoster?.(this.rosterList());
       this.events.onStatus?.("open");
+      this.startHostHeartbeat();
       void id;
     });
 
@@ -110,14 +119,15 @@ export class Room {
       // version + capacity checks happen when the client says hello
       conn.on("data", (raw) => this.onHostData(conn, raw));
     });
-    conn.on("close", () => this.removeClient(conn.connectionId));
-    conn.on("error", () => this.removeClient(conn.connectionId));
+    conn.on("close", () => this.removeClient(conn.connectionId, "left"));
+    conn.on("error", () => this.removeClient(conn.connectionId, "left"));
   }
 
   private onHostData(conn: DataConnection, raw: unknown) {
     if (!isNetMsg(raw)) return;
     const msg = raw as ClientMsg;
     const id = conn.connectionId;
+    this.lastSeen.set(id, Date.now()); // any message counts as activity
 
     switch (msg.t) {
       case "hello": {
@@ -140,6 +150,7 @@ export class Room {
         };
         this.conns.set(id, conn);
         this.roster.set(id, info);
+        this.lastSeen.set(id, Date.now());
         this.sendTo(conn, {
           t: "welcome",
           you: info,
@@ -150,6 +161,11 @@ export class Room {
         this.events.onRoster?.(this.rosterList());
         break;
       }
+      case "ping":
+        break; // activity already recorded above
+      case "bye":
+        this.removeClient(id, "left");
+        break;
       case "input": {
         // relay to every other client, and surface locally
         this.broadcast({ t: "rinput", id, startTick: msg.startTick, masks: msg.masks }, id);
@@ -168,13 +184,35 @@ export class Room {
     }
   }
 
-  private removeClient(id: PlayerId) {
+  private removeClient(id: PlayerId, _reason: "left") {
     if (!this.conns.has(id) && !this.roster.has(id)) return;
+    try {
+      this.conns.get(id)?.close();
+    } catch {
+      /* ignore */
+    }
     this.conns.delete(id);
     this.roster.delete(id);
+    this.lastSeen.delete(id);
     this.broadcast({ t: "roster", players: this.rosterList() });
     this.events.onRoster?.(this.rosterList());
-    this.events.onRemoteReset?.(id);
+    this.events.onRemoteLeave?.(id); // drop the car immediately
+  }
+
+  // ── Heartbeat (host) ─────────────────────────────────────────
+
+  private startHostHeartbeat() {
+    this.heartbeat = setInterval(() => {
+      if (this.destroyed) return;
+      const now = Date.now();
+      // ping all clients so they know the host is alive
+      this.broadcast({ t: "hping" });
+      // drop clients we haven't heard from within the timeout
+      for (const [id] of this.conns) {
+        const seen = this.lastSeen.get(id) ?? now;
+        if (now - seen > PEER_TIMEOUT_MS) this.removeClient(id, "left");
+      }
+    }, HEARTBEAT_MS);
   }
 
   /** Verify a submitted replay and fold it into the leaderboard (host authority). */
@@ -230,21 +268,38 @@ export class Room {
           sim: LOCAL_SIM_VERSION,
           name,
         });
+        this.hostLastSeen = Date.now();
+        this.startClientHeartbeat();
       });
       conn.on("data", (raw) => this.onClientData(raw));
-      conn.on("close", () => {
-        this.events.onStatus?.("closed");
-        this.events.onError?.("Conexão com o host encerrada.");
-      });
+      conn.on("close", () => this.handleHostGone());
       conn.on("error", (err) => this.fail(err));
     });
     this.peer.on("error", (err) => this.fail(err));
     this.peer.on("disconnected", () => this.peer.reconnect());
   }
 
+  private startClientHeartbeat() {
+    this.heartbeat = setInterval(() => {
+      if (this.destroyed) return;
+      if (this.toHost?.open) this.sendTo(this.toHost, { t: "ping" });
+      // if the host went silent past the timeout, treat the room as gone
+      if (Date.now() - this.hostLastSeen > PEER_TIMEOUT_MS) this.handleHostGone();
+    }, HEARTBEAT_MS);
+  }
+
+  /** The host disconnected or timed out: the star collapses → leave the room. */
+  private handleHostGone() {
+    if (this.destroyed) return;
+    this.stopHeartbeat();
+    this.events.onStatus?.("closed");
+    this.events.onError?.("O host saiu da sala.");
+  }
+
   private onClientData(raw: unknown) {
     if (!isNetMsg(raw)) return;
     const msg = raw as HostMsg;
+    this.hostLastSeen = Date.now(); // any message means the host is alive
     switch (msg.t) {
       case "welcome": {
         this.self = msg.you;
@@ -264,6 +319,11 @@ export class Room {
         this.events.onStatus?.("error");
         break;
       }
+      case "hping":
+        break; // liveness already recorded above
+      case "closed":
+        this.handleHostGone();
+        break;
       case "roster":
         this.events.onRoster?.(msg.players);
         break;
@@ -313,7 +373,36 @@ export class Room {
     return this.self;
   }
 
+  private stopHeartbeat() {
+    if (this.heartbeat !== null) {
+      clearInterval(this.heartbeat);
+      this.heartbeat = null;
+    }
+  }
+
+  /**
+   * Leave the room cleanly. Called on tab close (beforeunload) and when the
+   * user returns to the lobby. Sends an explicit notice so peers drop us
+   * immediately instead of waiting for the heartbeat timeout.
+   */
+  leave() {
+    if (this.destroyed) return;
+    try {
+      if (this.isHost) {
+        this.broadcast({ t: "closed" }); // tell clients the room is gone
+      } else if (this.toHost?.open) {
+        this.sendTo(this.toHost, { t: "bye" });
+      }
+    } catch {
+      /* ignore */
+    }
+    this.destroy();
+  }
+
   destroy() {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.stopHeartbeat();
     try {
       this.conns.forEach((c) => c.close());
       this.toHost?.close();

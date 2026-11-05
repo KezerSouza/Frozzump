@@ -50,3 +50,13 @@ tools/bot.ts  tuning bot
 2. No `Math.random()` and no `Date.now()`.
 3. Time = an integer number of ticks (120 Hz). Never trust time measured by the client.
 4. Changed anything in `params.ts`/`sim.ts`/`track.ts`? Bump `SIM_VERSION` and update the test's GOLDEN.
+
+## Contributors
+
+Thanks to everyone who has contributed to this project!
+
+<a href="https://github.com/KezerSouza/snowgo-prototype/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=KezerSouza/snowgo-prototype" alt="Contributors" />
+</a>
+
+<sub>Avatars are generated automatically by <a href="https://contrib.rocks">contrib.rocks</a> from the repository's contributor list.</sub>
