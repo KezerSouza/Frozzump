@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  OVAL_1, SIM_VERSION, TOTAL_LAPS, createState, decodeReplay, encodeReplay,
-  fromBase64, hashState, step, toBase64, verifyReplay, IN_LEFT, IN_RIGHT,
+  OVAL_1, SIM_VERSION, SUBTICKS_PER_TICK, TOTAL_LAPS, createState, decodeReplay, encodeReplay,
+  fromBase64, gateCrossing, hashState, step, toBase64, verifyReplay, IN_LEFT, IN_RIGHT, type Gate,
 } from "../src/sim";
 import { runBot } from "../tools/bot";
 
@@ -48,6 +48,95 @@ describe("simulation", () => {
   });
 });
 
+const S = SUBTICKS_PER_TICK;
+
+describe("gateCrossing", () => {
+  const g: Gate = { ax: 0, ay: -1, bx: 0, by: 1, dx: 1, dy: 0 }; // vertical line at x=0, counts left -> right
+
+  it("returns the fraction of the step at which the line was crossed", () => {
+    expect(gateCrossing(g, -0.6, 0.3, 0.2, 0.3)).toBeCloseTo(0.75, 12);
+  });
+
+  it("wrong direction => -1", () => {
+    expect(gateCrossing(g, 0.2, 0.3, -0.6, 0.3)).toBe(-1);
+  });
+
+  it("a step that does not reach the line => -1", () => {
+    expect(gateCrossing(g, -0.6, 0.3, -0.1, 0.3)).toBe(-1);
+  });
+
+  it("passing beside the gate (outside the segment) => -1", () => {
+    expect(gateCrossing(g, -0.6, 1.5, 0.2, 1.5)).toBe(-1);
+  });
+
+  it("a step ending exactly on the line => t = 1, and the next step does not count again", () => {
+    const path = [-0.6, 0, 0.8, 1.6];
+    expect(gateCrossing(g, path[0], 0, path[1], 0)).toBe(1);
+    expect(gateCrossing(g, path[1], 0, path[2], 0)).toBe(-1);
+    let crossings = 0;
+    for (let i = 1; i < path.length; i++) if (gateCrossing(g, path[i - 1], 0, path[i], 0) >= 0) crossings++;
+    expect(crossings).toBe(1);
+  });
+});
+
+describe("sub-tick lap time (regression: ±1 tick alternation between identical laps)", () => {
+  const gate = OVAL_1.gates[0]; // x = 0, y in [R-W, R+W]
+  const Y = OVAL_1.centerRadius;
+  const V = 13.37; // m/s, constant
+  const X0 = -10; // the line is crossed at t* = 10 / V s = 89.75... ticks (non-integer on purpose)
+  const exactSub = (-X0 / V) * 120 * S;
+
+  /** Samples the path at t_k = (k + phase) ticks; returns the sub-tick instant and the naive (integer) tick. */
+  function measure(phase: number) {
+    const xAt = (ticks: number) => X0 + (V * ticks) / 120;
+    for (let k = 1; ; k++) {
+      const t = gateCrossing(gate, xAt(k - 1 + phase), Y, xAt(k + phase), Y);
+      if (t >= 0) return { sub: (k - 1 + phase) * S + Math.floor(t * S), naiveTick: k };
+    }
+  }
+
+  it("the sub-tick instant does not depend on the sampling phase; the naive tick does", () => {
+    const phases = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9];
+    const m = phases.map(measure);
+    for (const r of m) expect(Math.abs(r.sub - exactSub)).toBeLessThanOrEqual(2);
+    const naive = m.map((r) => r.naiveTick); // what the old code stored (lapTicks.push(s.tick))
+    expect(Math.max(...naive) - Math.min(...naive)).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("lap times in the bot race", () => {
+  const { inputs } = runBot(true);
+
+  it("each lap time lies inside its detection tick, and the interpolated point is on the finish line", () => {
+    const s = createState(OVAL_1);
+    let checked = 0;
+    for (let i = 0; i < inputs.length && !s.finished; i++) {
+      const px = s.x, py = s.y, laps = s.laps;
+      step(s, OVAL_1, inputs[i]);
+      if (s.laps === laps) continue;
+      const sub = s.lapSubticks[s.lapSubticks.length - 1];
+      expect(Number.isInteger(sub)).toBe(true);
+      expect(sub).toBeGreaterThanOrEqual((s.tick - 1) * S);
+      expect(sub).toBeLessThanOrEqual(s.tick * S);
+      const f = (sub - (s.tick - 1) * S) / S;
+      expect(Math.abs(px + (s.x - px) * f)).toBeLessThan(1e-4); // gate 0 is at x = 0
+      const y = py + (s.y - py) * f;
+      expect(y).toBeGreaterThanOrEqual(OVAL_1.gates[0].ay);
+      expect(y).toBeLessThanOrEqual(OVAL_1.gates[0].by);
+      checked++;
+    }
+    expect(checked).toBe(TOTAL_LAPS);
+  });
+
+  it("the splits add up exactly to the total", () => {
+    const v = verifyReplay(OVAL_1, inputs);
+    const splits = v.lapSubticks.map((t, i, a) => t - (a[i - 1] ?? 0));
+    expect(splits.length).toBe(TOTAL_LAPS);
+    expect(splits.reduce((a, b) => a + b, 0)).toBe(v.finishSubticks);
+    expect(v.finishSubticks).toBeGreaterThan(0);
+  });
+});
+
 describe("replay and determinism", () => {
   const { s: live, inputs } = runBot(true);
 
@@ -62,6 +151,8 @@ describe("replay and determinism", () => {
     const v = verifyReplay(OVAL_1, decodeReplay(encodeReplay(inputs)));
     expect(v.finished).toBe(true);
     expect(v.ticks).toBe(live.tick);
+    expect(v.finishSubticks).toBe(live.finishSubticks);
+    expect(v.lapSubticks).toEqual(live.lapSubticks);
     expect(v.hash).toBe(hashState(live));
   });
 
@@ -75,8 +166,10 @@ describe("replay and determinism", () => {
   // deterministic. If you changed it on purpose: bump SIM_VERSION and update the value.
   it(`golden hash (SIM_VERSION=${SIM_VERSION})`, () => {
     const v = verifyReplay(OVAL_1, inputs);
-    expect({ ticks: v.ticks, hash: v.hash }).toEqual(GOLDEN);
+    expect({ ticks: v.ticks, finishSubticks: v.finishSubticks, hash: v.hash }).toEqual(GOLDEN);
   });
 });
 
-const GOLDEN = { ticks: 2837, hash: 3229843131 };
+// SIM_VERSION=5: times in subticks (1/65536 tick). Same 2837 ticks as v4 (stop criterion unchanged);
+// the finish is at 185871260 subticks ≈ 2836.18 ticks ≈ 23.635 s.
+const GOLDEN = { ticks: 2837, finishSubticks: 185871260, hash: 3224411183 };

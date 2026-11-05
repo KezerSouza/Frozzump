@@ -1,5 +1,5 @@
 import {
-  DT, OVAL_1, SIM_VERSION, TICK_RATE, TOTAL_LAPS,
+  DT, OVAL_1, SIM_VERSION, SUBTICKS_PER_TICK, TICK_RATE, TOTAL_LAPS,
   createState, decodeReplay, encodeReplay, fromBase64, step, toBase64, type CarState,
 } from "../sim";
 import { Room, type RemoteInputBatch } from "../net/room";
@@ -18,7 +18,7 @@ const ctx = canvas.getContext("2d")!;
 const keys = new Keys();
 
 type Phase = "countdown" | "racing" | "finished";
-interface Best { ticks: number; replay: string }
+interface Best { time: number; replay: string } // time in subticks (= finishSubticks)
 
 let phase: Phase = "countdown";
 let countdownEnd = 0;
@@ -68,10 +68,20 @@ function loadBest(): Best | null {
     return null;
   }
 }
-function fmt(ticks: number): string {
-  const ms = Math.round((ticks * 1000) / TICK_RATE);
+/** Display only (may round): subticks -> whole milliseconds */
+function subticksToMs(sub: number): number {
+  return Math.round((sub * 1000) / (TICK_RATE * SUBTICKS_PER_TICK));
+}
+function fmtMs(ms: number): string {
   const m = Math.floor(ms / 60000), s = Math.floor((ms % 60000) / 1000), r = ms % 1000;
   return `${m}:${String(s).padStart(2, "0")}.${String(r).padStart(3, "0")}`;
+}
+function fmtSubticks(sub: number): string {
+  return fmtMs(subticksToMs(sub));
+}
+/** Splits = differences of the ROUNDED cumulative times, so the displayed splits add up to the displayed total. */
+function fmtSplits(lapSubticks: number[]): string[] {
+  return lapSubticks.map((t, i, a) => fmtMs(subticksToMs(t) - subticksToMs(a[i - 1] ?? 0)));
 }
 
 function reset() {
@@ -98,13 +108,13 @@ function reset() {
 function onFinish() {
   phase = "finished";
   const replay = toBase64(encodeReplay(inputs));
-  if (!best || car.tick < best.ticks) {
-    best = { ticks: car.tick, replay };
+  if (!best || car.finishSubticks < best.time) {
+    best = { time: car.finishSubticks, replay };
     localStorage.setItem(BEST_KEY, JSON.stringify(best));
     newRecord = true;
   }
   // submit to the shared leaderboard (host verifies via verifyReplay)
-  room?.sendFinish(replay, car.tick);
+  room?.sendFinish(replay, car.finishSubticks);
 }
 
 keys.onRestart = reset;
@@ -192,7 +202,8 @@ function buildRank(): RankRow[] {
   const selfId = self?.id;
   const push = (info: PlayerInfo, s: CarState, isSelf: boolean) => {
     // progress key: laps dominate, then gate index — higher is further ahead
-    const key = s.finished ? 1e9 + (1e9 - s.tick) : s.laps * 100 + s.nextGate;
+    // finished cars rank above everyone, ordered by exact race time (subticks)
+    const key = s.finished ? 1e15 - s.finishSubticks : s.laps * 100 + s.nextGate;
     rows.push({
       key,
       row: {
@@ -216,7 +227,7 @@ function buildLeaderboard(): LeaderRow[] {
   return leaderboard.map((e) => ({
     name: e.name,
     color: e.color,
-    timeText: fmt(e.ticks),
+    timeText: fmtSubticks(e.time),
     isSelf: e.id === selfId,
   }));
 }
@@ -274,9 +285,9 @@ function frame(now: number) {
   const scene: Scene = {
     track, car: cur, state: car, ghost: g, particles, phase,
     countdownText: phase === "countdown" ? String(Math.max(1, secondsLeft)) : "",
-    timeText: fmt(car.tick),
-    bestText: best ? fmt(best.ticks) : "—",
-    splits: car.lapTicks.map((t, i, a) => fmt(t - (a[i - 1] ?? 0))),
+    timeText: fmtSubticks(car.finished ? car.finishSubticks : car.tick * SUBTICKS_PER_TICK),
+    bestText: best ? fmtSubticks(best.time) : "—",
+    splits: fmtSplits(car.lapSubticks),
     newRecord, ghostOn,
     selfColor: self?.color ?? "#e5412d",
     othersOn,

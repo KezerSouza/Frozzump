@@ -219,32 +219,33 @@ export class Room {
   private ingestFinish(id: PlayerId, replayB64: string) {
     const info = this.roster.get(id);
     if (!info) return;
-    let ticks: number;
+    let time: number;
     try {
       const inputs = decodeReplay(fromBase64(replayB64));
       const res = verifyReplay(OVAL_1, inputs);
-      if (!res.finished || res.laps.length < TOTAL_LAPS) return; // invalid run
-      ticks = res.ticks;
+      if (!res.finished || res.lapSubticks.length < TOTAL_LAPS) return; // invalid run
+      time = res.finishSubticks;
     } catch {
       return; // malformed replay → ignore
     }
-    this.recordTime(info, ticks);
+    this.recordTime(info, time);
   }
 
   /** The host records its OWN verified time (called from the client glue). */
-  recordSelfTime(ticks: number) {
+  recordSelfTime(time: number) {
     if (!this.isHost || !this.self) return;
-    this.recordTime(this.self, ticks);
+    this.recordTime(this.self, time);
   }
 
-  private recordTime(info: PlayerInfo, ticks: number) {
+  /** `time` in subticks (finishSubticks). */
+  private recordTime(info: PlayerInfo, time: number) {
     const prev = this.leaderboard.find((e) => e.id === info.id);
     if (prev) {
-      if (ticks < prev.ticks) prev.ticks = ticks;
+      if (time < prev.time) prev.time = time;
     } else {
-      this.leaderboard.push({ id: info.id, name: info.name, color: info.color, ticks });
+      this.leaderboard.push({ id: info.id, name: info.name, color: info.color, time });
     }
-    this.leaderboard.sort((a, b) => a.ticks - b.ticks);
+    this.leaderboard.sort((a, b) => a.time - b.time);
     this.broadcast({ t: "leaderboard", leaderboard: this.leaderboard });
     this.events.onLeaderboard?.(this.leaderboard);
   }
@@ -361,9 +362,9 @@ export class Room {
   }
 
   /** Submit a finished replay for verification / leaderboard. */
-  sendFinish(replayB64: string, ticks: number) {
+  sendFinish(replayB64: string, time: number) {
     if (this.isHost) {
-      this.recordSelfTime(ticks);
+      this.recordSelfTime(time);
     } else if (this.toHost?.open) {
       this.sendTo(this.toHost, { t: "finish", replay: replayB64 });
     }

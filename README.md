@@ -46,9 +46,10 @@ tools/bot.ts  tuning bot
 
 ## Rules for `src/sim`
 
-1. Only `+ - * /`, `Math.sqrt`, `min/max/abs`, comparisons. No `Math.sin/cos/exp/pow`.
+1. Only `+ - * /`, `Math.sqrt`, `min/max/abs/floor`, comparisons. No `Math.sin/cos/exp/pow`.
 2. No `Math.random()` and no `Date.now()`.
-3. Time = an integer number of ticks (120 Hz). Never trust time measured by the client.
+3. The simulation steps in whole ticks (120 Hz); race and lap times are integers in subticks (1/65536 tick).
+   Never trust time measured by the client: the server re-runs the replay.
 4. Changed anything in `params.ts`/`sim.ts`/`track.ts`? Bump `SIM_VERSION` and update the test's GOLDEN.
 
 ## Contributors
