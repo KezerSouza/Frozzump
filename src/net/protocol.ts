@@ -12,7 +12,10 @@
 
 import { SIM_VERSION } from "../sim";
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
+
+/** Max nickname length (enforced by the lobby input and again by the host). */
+export const MAX_NAME_LEN = 25;
 
 /** A player id is the PeerJS connection id of a client (or "host" for the owner). */
 export type PlayerId = string;
@@ -31,6 +34,34 @@ export interface LeaderEntry {
   color: string;
   time: number; // total race time in subticks = verifyReplay().finishSubticks (lower is better)
 }
+
+// ── Game modes (host-authoritative) ────────────────────────────
+
+/**
+ * "free": everyone races on their own and chases each other's best time.
+ * "race": everyone starts together for a 5-lap race; positions are shown and
+ *         the next round starts 20 s after the first finisher (or when the host
+ *         restarts it).
+ */
+export type GameMode = "free" | "race";
+
+/** One verified finisher of the current race round. */
+export interface RoundResult {
+  id: PlayerId;
+  name: string;
+  color: string;
+  time: number; // race time in subticks (lower is better)
+}
+
+export interface GameState {
+  mode: GameMode;
+  round: number; // increments at every race start (never reset while the room lives)
+  participants: PlayerId[]; // who started this round (late joiners wait for the next one)
+  results: RoundResult[]; // finishers, sorted by race time
+  nextInMs: number | null; // ms until the next round; null while nobody has finished
+}
+
+export const FREE_GAME: GameState = { mode: "free", round: 0, participants: [], results: [], nextInMs: null };
 
 // ── Client → Host ──────────────────────────────────────────────
 
@@ -53,6 +84,7 @@ export interface InputMsg {
 export interface FinishMsg {
   t: "finish";
   replay: string; // base64 RLE replay (see src/sim/replay.ts)
+  round: number; // race round this run belongs to (0 in free mode)
 }
 
 /** Client restarted its race (new countdown). */
@@ -78,6 +110,7 @@ export interface WelcomeMsg {
   you: PlayerInfo;
   players: PlayerInfo[];
   leaderboard: LeaderEntry[];
+  game: GameState;
 }
 
 /** Host rejects the client (room full or version mismatch). */
@@ -123,6 +156,12 @@ export interface LeaderboardMsg {
   leaderboard: LeaderEntry[];
 }
 
+/** Game mode / race round changed (host is the source of truth). */
+export interface GameMsg {
+  t: "game";
+  game: GameState;
+}
+
 export type ClientMsg = HelloMsg | InputMsg | FinishMsg | ResetMsg | PingMsg | ByeMsg;
 export type HostMsg =
   | WelcomeMsg
@@ -131,6 +170,7 @@ export type HostMsg =
   | RelayInputMsg
   | RelayResetMsg
   | LeaderboardMsg
+  | GameMsg
   | HostPingMsg
   | RoomClosedMsg;
 export type NetMsg = ClientMsg | HostMsg;
@@ -140,22 +180,23 @@ export const HEARTBEAT_MS = 2000;
 export const PEER_TIMEOUT_MS = 6000; // ~3 missed heartbeats
 
 /** 15 visually distinct car colors (max connections = 15). */
+// No light blues: they look like the personal ghost (light blue) at shadow alpha.
 export const PALETTE: string[] = [
   "#e5412d", // red (classic single-player color)
-  "#3da5ff", // blue
   "#45d483", // green
   "#ffd23d", // yellow
   "#c86bff", // purple
   "#ff8a3d", // orange
-  "#2ee6d6", // teal
   "#ff5fa2", // pink
   "#9be34a", // lime
+  "#8b5a2b", // brown
   "#6c7bff", // indigo
   "#ffac5f", // amber
-  "#5fd0ff", // sky
+  "#3a4250", // graphite
   "#d98cff", // violet
   "#8fe0b8", // mint
   "#f0f0f0", // white
+  "#2ee6d6", // teal
 ];
 
 export const MAX_PLAYERS = PALETTE.length; // 15
