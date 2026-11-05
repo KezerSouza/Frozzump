@@ -9,6 +9,7 @@ export class Keys {
   private mask = 0;
   onRestart: () => void = () => {};
   onToggleGhost: () => void = () => {};
+  onToggleOthers: () => void = () => {};
 
   constructor() {
     window.addEventListener("keydown", (e) => {
@@ -18,6 +19,7 @@ export class Keys {
         e.preventDefault(); // keep the arrow keys from scrolling the page
       } else if (e.code === "KeyR" && !e.repeat) this.onRestart();
       else if (e.code === "KeyG" && !e.repeat) this.onToggleGhost();
+      else if (e.code === "KeyO" && !e.repeat) this.onToggleOthers();
     });
     window.addEventListener("keyup", (e) => {
       const bit = MAP[e.code];
