@@ -3,7 +3,7 @@
 // => bump SIM_VERSION (and the leaderboard becomes a new one).
 // ─────────────────────────────────────────────────────────────
 
-export const SIM_VERSION = 5;
+export const SIM_VERSION = 6;
 
 export const TICK_RATE = 120;
 export const DT = 1 / TICK_RATE;
@@ -39,6 +39,7 @@ export const WALL_BOUNCE = 0.15;
 export const WALL_KEEP = 0.95; //     fraction of speed kept each tick while in contact (scraping)
 export const WALL_IMPACT = 0.03; //   extra loss per m/s of speed "into" the wall (impact)
 export const WALL_MIN_KEEP = 0.4; //  an impact never takes more than 60% of the speed at once
+export const WALL_PIVOT = 0.15; // While touching a wall the car can still pivot
 
 // Ramp
 export const AIR_TICKS = 66; //     0.55 s airborne (~11 m: enough to clear the snow)

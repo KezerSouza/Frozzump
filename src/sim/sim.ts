@@ -1,7 +1,7 @@
 import {
   AIR_TICKS, BOOST_SPEED, CAR_RADIUS, DRAG_SNOW, DRAG_TRACK, DT, IN_LEFT, IN_RIGHT,
   LAT_KEEP_AIR, LAT_KEEP_SNOW, LAT_KEEP_TRACK, MAX_YAW, STEER_AIR_SCALE, STEER_RATE,
-  SUBTICKS_PER_TICK, THRUST, TOTAL_LAPS, V_REF, WALL_BOUNCE, WALL_IMPACT, WALL_KEEP, WALL_MIN_KEEP,
+  SUBTICKS_PER_TICK, THRUST, TOTAL_LAPS, V_REF, WALL_BOUNCE, WALL_IMPACT, WALL_KEEP, WALL_MIN_KEEP, WALL_PIVOT,
 } from "./params";
 import { gateCrossing, inRects, type TrackDef } from "./track";
 
@@ -15,6 +15,7 @@ export interface CarState {
   steer: number; // -1..1, smoothed steering
   airTicks: number; // > 0 => airborne (jumped off the ramp)
   onPad: boolean; // was on the ramp on the previous tick
+  onWall: boolean; // was touching a wall on the previous tick (lets the car pivot out of a head-on hit)
   nextGate: number;
   laps: number;
   tick: number;
@@ -27,7 +28,7 @@ export function createState(track: TrackDef): CarState {
   return {
     x: track.start.x, y: track.start.y, vx: 0, vy: 0,
     hx: track.start.hx, hy: track.start.hy,
-    steer: 0, airTicks: 0, onPad: false,
+    steer: 0, airTicks: 0, onPad: false, onWall: false,
     nextGate: 1, laps: 0, tick: 0, finished: false, lapSubticks: [], finishSubticks: 0,
   };
 }
@@ -55,6 +56,7 @@ export function step(s: CarState, track: TrackDef, input: number): void {
   let sf = fwd0 / V_REF;
   if (sf > 1) sf = 1;
   else if (sf < -1) sf = -1;
+  if (s.onWall && sf < WALL_PIVOT) sf = WALL_PIVOT; // pivot against the wall (also when bouncing backwards)
   const theta = s.steer * MAX_YAW * sf * (air ? STEER_AIR_SCALE : 1) * DT;
   const t2 = theta * theta;
   const c = 1 - t2 / 2 + (t2 * t2) / 24; // cos(θ) via series (θ is small)
@@ -134,7 +136,11 @@ function resolveWalls(s: CarState, track: TrackDef): void {
 
   const rMin = track.centerRadius - track.halfWidth + CAR_RADIUS;
   const rMax = track.centerRadius + track.halfWidth - CAR_RADIUS;
-  if (dist <= rMax && dist >= rMin) return;
+  if (dist <= rMax && dist >= rMin) {
+    s.onWall = false;
+    return;
+  }
+  s.onWall = true;
 
   let nx = 0;
   let ny = -1;
