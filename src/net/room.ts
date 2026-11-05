@@ -15,7 +15,9 @@ import { Peer, type DataConnection } from "peerjs";
 import { TOTAL_LAPS, fromBase64, decodeReplay, verifyReplay, OVAL_1 } from "../sim";
 import {
   HEARTBEAT_MS,
+  FREE_GAME,
   LOCAL_SIM_VERSION,
+  MAX_NAME_LEN,
   MAX_PLAYERS,
   PALETTE,
   PEER_TIMEOUT_MS,
@@ -23,12 +25,15 @@ import {
   codeToPeerId,
   isNetMsg,
   type ClientMsg,
+  type GameMode,
+  type GameState,
   type HostMsg,
   type LeaderEntry,
   type NetMsg,
   type PlayerId,
   type PlayerInfo,
 } from "./protocol";
+import { RoundHost } from "./round";
 
 export interface RemoteInputBatch {
   id: PlayerId;
@@ -44,6 +49,8 @@ export interface RoomEvents {
   /** A remote player left (disconnect / closed tab / timeout) — drop their car. */
   onRemoteLeave?: (id: PlayerId) => void;
   onSelf?: (self: PlayerInfo) => void;
+  /** Game mode / race round changed (host and clients). */
+  onGame?: (game: GameState) => void;
   onError?: (message: string) => void;
   onStatus?: (status: RoomStatus) => void;
 }
@@ -65,6 +72,7 @@ export class Room {
   private conns = new Map<PlayerId, DataConnection>();
   private roster = new Map<PlayerId, PlayerInfo>();
   private leaderboard: LeaderEntry[] = [];
+  private rounds: RoundHost | null = null;
 
   // client-only state
   private toHost: DataConnection | null = null;
@@ -97,14 +105,22 @@ export class Room {
     this.peer.on("open", (id) => {
       this.self = {
         id: "host",
-        name: name || "Host",
+        name: name.trim().slice(0, MAX_NAME_LEN) || "Host",
         color: PALETTE[0],
         isHost: true,
       };
       this.roster.set("host", this.self);
       this.events.onSelf?.(this.self);
       this.events.onRoster?.(this.rosterList());
+      this.rounds = new RoundHost(
+        () => this.rosterList().map((p) => p.id),
+        (game) => {
+          this.broadcast({ t: "game", game });
+          this.events.onGame?.(game);
+        },
+      );
       this.events.onStatus?.("open");
+      this.events.onGame?.(this.rounds.snapshot());
       this.startHostHeartbeat();
       void id;
     });
@@ -144,7 +160,7 @@ export class Room {
         const color = this.nextColor();
         const info: PlayerInfo = {
           id,
-          name: (msg.name || "Player").slice(0, 16),
+          name: (msg.name || "").trim().slice(0, MAX_NAME_LEN) || "Player",
           color,
           isHost: false,
         };
@@ -156,6 +172,7 @@ export class Room {
           you: info,
           players: this.rosterList(),
           leaderboard: this.leaderboard,
+          game: this.rounds?.snapshot() ?? FREE_GAME,
         });
         this.broadcast({ t: "roster", players: this.rosterList() }, id);
         this.events.onRoster?.(this.rosterList());
@@ -178,7 +195,7 @@ export class Room {
         break;
       }
       case "finish": {
-        this.ingestFinish(id, msg.replay);
+        this.ingestFinish(id, msg.replay, msg.round);
         break;
       }
     }
@@ -194,6 +211,7 @@ export class Room {
     this.conns.delete(id);
     this.roster.delete(id);
     this.lastSeen.delete(id);
+    this.rounds?.removePlayer(id);
     this.broadcast({ t: "roster", players: this.rosterList() });
     this.events.onRoster?.(this.rosterList());
     this.events.onRemoteLeave?.(id); // drop the car immediately
@@ -216,7 +234,7 @@ export class Room {
   }
 
   /** Verify a submitted replay and fold it into the leaderboard (host authority). */
-  private ingestFinish(id: PlayerId, replayB64: string) {
+  private ingestFinish(id: PlayerId, replayB64: string, round: number) {
     const info = this.roster.get(id);
     if (!info) return;
     let time: number;
@@ -229,12 +247,24 @@ export class Room {
       return; // malformed replay → ignore
     }
     this.recordTime(info, time);
+    this.rounds?.finish(info, round, time);
   }
 
-  /** The host records its OWN verified time (called from the client glue). */
-  recordSelfTime(time: number) {
+  /** The host records its OWN time (called from the client glue). */
+  recordSelfTime(time: number, round: number) {
     if (!this.isHost || !this.self) return;
     this.recordTime(this.self, time);
+    this.rounds?.finish(this.self, round, time);
+  }
+
+  /** Host: switch between free play and synchronized races. */
+  setMode(mode: GameMode) {
+    if (this.isHost) this.rounds?.setMode(mode);
+  }
+
+  /** Host: start the next race round now (allowed once someone has finished). */
+  restartRound() {
+    if (this.isHost) this.rounds?.restart();
   }
 
   /** `time` in subticks (finishSubticks). */
@@ -308,6 +338,7 @@ export class Room {
         this.events.onRoster?.(msg.players);
         this.events.onLeaderboard?.(msg.leaderboard);
         this.events.onStatus?.("open");
+        this.events.onGame?.(msg.game);
         break;
       }
       case "reject": {
@@ -330,6 +361,9 @@ export class Room {
         break;
       case "leaderboard":
         this.events.onLeaderboard?.(msg.leaderboard);
+        break;
+      case "game":
+        this.events.onGame?.(msg.game);
         break;
       case "rinput":
         this.events.onRemoteInput?.({ id: msg.id, startTick: msg.startTick, masks: msg.masks });
@@ -362,11 +396,11 @@ export class Room {
   }
 
   /** Submit a finished replay for verification / leaderboard. */
-  sendFinish(replayB64: string, time: number) {
+  sendFinish(replayB64: string, time: number, round = 0) {
     if (this.isHost) {
-      this.recordSelfTime(time);
+      this.recordSelfTime(time, round);
     } else if (this.toHost?.open) {
-      this.sendTo(this.toHost, { t: "finish", replay: replayB64 });
+      this.sendTo(this.toHost, { t: "finish", replay: replayB64, round });
     }
   }
 
@@ -404,6 +438,7 @@ export class Room {
     if (this.destroyed) return;
     this.destroyed = true;
     this.stopHeartbeat();
+    this.rounds?.dispose();
     try {
       this.conns.forEach((c) => c.close());
       this.toHost?.close();

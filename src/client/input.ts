@@ -18,6 +18,7 @@ export class Keys {
   onRestart: () => void = () => {};
   onToggleGhost: () => void = () => {};
   onToggleOthers: () => void = () => {};
+  onOpenLobby: () => void = () => {};
 
   constructor() {
     window.addEventListener("keydown", (e) => {
@@ -30,6 +31,10 @@ export class Keys {
       } else if (e.code === "KeyR" && !e.repeat) this.onRestart();
       else if (e.code === "KeyG" && !e.repeat) this.onToggleGhost();
       else if (e.code === "KeyO" && !e.repeat) this.onToggleOthers();
+      else if (e.code === "KeyM" && !e.repeat) {
+        e.preventDefault(); // the lobby focuses a text field: don't type the "m" into it
+        this.onOpenLobby();
+      }
     });
     window.addEventListener("keyup", (e) => {
       if (isTyping(e.target)) return;
