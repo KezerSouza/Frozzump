@@ -4,13 +4,25 @@
 //
 // Race mode: every connected player starts round N together. The first
 // verified finisher arms a 20 s timer; when it fires the next round starts.
-// Once someone has finished, the host may also restart right away.
+// Once someone has finished, the host may also restart early, but only after
+// RACE_MIN_RESTART_MS: time to read the results and for the others to finish.
 // ─────────────────────────────────────────────────────────────
 
 import type { GameMode, GameState, PlayerId, PlayerInfo, RoundResult } from "./protocol";
 
 /** Delay between the first finisher and the next round. */
 export const RACE_NEXT_DELAY_MS = 20_000;
+
+/** Minimum time after the first finisher before the host may restart the round. */
+export const RACE_MIN_RESTART_MS = 5_000;
+
+/**
+ * Ms until the host may restart, given the ms left on the next-round timer (`nextInMs`, which counts
+ * down from RACE_NEXT_DELAY_MS at the first finish). 0 = allowed now. Shared by host and UI.
+ */
+export function restartWaitMs(nextInMs: number): number {
+  return Math.max(0, RACE_MIN_RESTART_MS - (RACE_NEXT_DELAY_MS - nextInMs));
+}
 
 export interface Clock {
   now(): number;
@@ -66,9 +78,15 @@ export class RoundHost {
     this.emit();
   }
 
-  /** The host may skip the wait once the first player has finished. */
+  /** Ms until the host may restart; null while nobody has finished (not allowed yet). */
+  restartInMs(): number | null {
+    if (this.mode !== "race" || this.results.length === 0 || this.deadline === null) return null;
+    return restartWaitMs(this.deadline - this.clock.now());
+  }
+
+  /** The host may skip the wait RACE_MIN_RESTART_MS after the first player has finished. */
   canRestart(): boolean {
-    return this.mode === "race" && this.results.length > 0;
+    return this.restartInMs() === 0;
   }
 
   restart(): boolean {

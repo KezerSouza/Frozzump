@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GameState, PlayerInfo } from "../src/net/protocol";
-import { RACE_NEXT_DELAY_MS, RoundHost } from "../src/net/round";
+import { RACE_MIN_RESTART_MS, RACE_NEXT_DELAY_MS, RoundHost, restartWaitMs } from "../src/net/round";
 
 const P = (id: string): PlayerInfo => ({ id, name: id.toUpperCase(), color: "#fff", isHost: id === "host" });
 
@@ -53,6 +53,7 @@ describe("RoundHost (race mode)", () => {
     expect(rh.finish(P("a"), 1, 5000)).toBe(true);
     expect(rh.finish(P("a"), 1, 3000)).toBe(false);
     expect(last().results).toHaveLength(1);
+    vi.advanceTimersByTime(RACE_MIN_RESTART_MS);
     rh.restart();
     expect(last().participants).toContain("late");
   });
@@ -64,11 +65,40 @@ describe("RoundHost (race mode)", () => {
     expect(rh.restart()).toBe(false);
     expect(last().round).toBe(1);
     rh.finish(P("host"), 1, 5000);
+    vi.advanceTimersByTime(RACE_MIN_RESTART_MS);
     expect(rh.canRestart()).toBe(true);
     expect(rh.restart()).toBe(true);
     expect(last().round).toBe(2);
     vi.advanceTimersByTime(RACE_NEXT_DELAY_MS); // the old timer was cancelled
     expect(last().round).toBe(2);
+  });
+
+  it("the host must wait RACE_MIN_RESTART_MS after the FIRST finisher before restarting", () => {
+    const { rh, last } = setup();
+    rh.setMode("race");
+    expect(rh.restartInMs()).toBeNull();
+    rh.finish(P("host"), 1, 5000);
+    expect(rh.restartInMs()).toBe(RACE_MIN_RESTART_MS);
+    expect(rh.restart()).toBe(false); // too early: refused by the host itself
+    expect(last().round).toBe(1);
+    vi.advanceTimersByTime(3000);
+    rh.finish(P("a"), 1, 6000); // a later finisher does NOT push the limit back
+    expect(rh.restartInMs()).toBe(RACE_MIN_RESTART_MS - 3000);
+    expect(rh.restart()).toBe(false);
+    vi.advanceTimersByTime(RACE_MIN_RESTART_MS - 3000 - 1);
+    expect(rh.canRestart()).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(rh.canRestart()).toBe(true);
+    expect(rh.restart()).toBe(true);
+    expect(last().round).toBe(2);
+    expect(rh.restartInMs()).toBeNull(); // new round: nobody has finished again
+  });
+
+  it("restartWaitMs derives the same wait from the timer a client receives", () => {
+    expect(restartWaitMs(RACE_NEXT_DELAY_MS)).toBe(RACE_MIN_RESTART_MS);
+    expect(restartWaitMs(RACE_NEXT_DELAY_MS - 2000)).toBe(RACE_MIN_RESTART_MS - 2000);
+    expect(restartWaitMs(RACE_NEXT_DELAY_MS - RACE_MIN_RESTART_MS)).toBe(0);
+    expect(restartWaitMs(1000)).toBe(0);
   });
 
   it("switching back to free cancels the timer", () => {

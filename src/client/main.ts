@@ -3,6 +3,7 @@ import {
   createState, decodeReplay, encodeReplay, fromBase64, step, toBase64, type CarState,
 } from "../sim";
 import { Room, type RemoteInputBatch } from "../net/room";
+import { restartWaitMs } from "../net/round";
 import { FREE_GAME, type GameMode, type GameState, type LeaderEntry, type PlayerInfo } from "../net/protocol";
 import { Keys } from "./input";
 import { advanceRemote, pose } from "./remote";
@@ -139,7 +140,7 @@ function onFinish() {
 keys.onRestart = () => {
   if (inRace()) {
     // races restart for everyone together; only the host can skip the wait
-    if (room?.isHost && game.results.length > 0) room.restartRound();
+    if (room?.isHost && restartWaitNow(performance.now()) === 0) room.restartRound(); // the host re-checks
     return;
   }
   reset();
@@ -232,6 +233,11 @@ function onGame(g: GameState) {
   }
 }
 
+/** Ms until the host may restart this race round (0 = now); null until someone has finished. */
+function restartWaitNow(now: number): number | null {
+  return nextDeadline === null || game.results.length === 0 ? null : restartWaitMs(nextDeadline - now);
+}
+
 function isParticipant(id: string): boolean {
   return game.participants.includes(id);
 }
@@ -309,11 +315,16 @@ function buildRaceView(now: number): RaceView | null {
     nextText = s > 0 ? `Próxima corrida em ${s}s` : "Começando…";
   }
   const first = game.results[0];
+  const wait = restartWaitNow(now);
   return {
     round: game.round,
     rows,
     nextText,
-    hostHint: room.isHost && game.results.length > 0 ? "R ou “Reiniciar corrida” para começar agora" : null,
+    hostHint: !room.isHost || wait === null
+      ? null
+      : wait > 0
+        ? `Reiniciar liberado em ${Math.ceil(wait / 1000)}s`
+        : "R ou “Reiniciar corrida” para começar agora",
     banner: first && (phase === "racing" || phase === "countdown") ? `${first.name} terminou! ${nextText}` : null,
     showPanel: phase === "finished" || phase === "waiting",
     waiting: phase === "waiting",
@@ -423,7 +434,7 @@ function frame(now: number) {
     roomCode: room?.code ?? null,
     selfName: room && self ? self.name : null,
     modeText: room ? (race ? `corrida ${game.round}` : "modo livre") : null,
-    restartKey: !race || (!!room?.isHost && game.results.length > 0),
+    restartKey: !race || (!!room?.isHost && restartWaitNow(now) === 0),
     race: buildRaceView(now),
   };
   roomBar.update({
@@ -431,7 +442,8 @@ function frame(now: number) {
     code: room?.code ?? "",
     isHost: !!room?.isHost,
     mode: game.mode,
-    canRestart: race && game.results.length > 0,
+    canRestart: race && restartWaitNow(now) === 0,
+    restartInS: race && restartWaitNow(now) !== null ? Math.ceil(restartWaitNow(now)! / 1000) : null,
   });
 
   const dpr = window.devicePixelRatio || 1;

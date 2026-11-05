@@ -153,6 +153,8 @@ export interface RoomBarState {
   isHost: boolean;
   mode: GameMode;
   canRestart: boolean;
+  /** seconds until restarting is allowed, once someone finished (null: nobody has finished yet) */
+  restartInS: number | null;
 }
 
 export interface RoomBarActions {
@@ -231,7 +233,8 @@ export function mountRoomBar(actions: RoomBarActions): { update: (s: RoomBarStat
       free.classList.toggle("on", s.mode === "free");
       race.classList.toggle("on", s.mode === "race");
       restart.disabled = !s.canRestart;
-      restart.title = s.canRestart ? "" : "Disponível quando o 1º colocado terminar";
+      restart.textContent = s.restartInS !== null && s.restartInS > 0 ? `Reiniciar corrida (${s.restartInS}s)` : "Reiniciar corrida";
+      restart.title = s.canRestart ? "" : "Disponível 5 s depois de o 1º colocado terminar";
     },
   };
 }
