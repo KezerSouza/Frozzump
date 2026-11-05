@@ -3,6 +3,32 @@ import { TOTAL_LAPS, type CarState, type TrackDef } from "../sim";
 export interface Pose { x: number; y: number; hx: number; hy: number }
 export interface Particle { x: number; y: number; vx: number; vy: number; life: number; max: number; size: number }
 
+/** A remote player's car, drawn as a light colored shadow. */
+export interface RemoteCar {
+  id: string;
+  name: string;
+  color: string;
+  pose: Pose;
+  air: number;
+}
+
+/** One row of the connected-players rank (left side). */
+export interface RankRow {
+  name: string;
+  color: string;
+  lap: number; // 1..TOTAL_LAPS
+  isSelf: boolean;
+  finished: boolean;
+}
+
+/** One row of the shared lap-time leaderboard. */
+export interface LeaderRow {
+  name: string;
+  color: string;
+  timeText: string;
+  isSelf: boolean;
+}
+
 export interface Scene {
   track: TrackDef;
   car: Pose;
@@ -16,6 +42,13 @@ export interface Scene {
   splits: string[];
   newRecord: boolean;
   ghostOn: boolean;
+  // multiplayer
+  selfColor: string;
+  othersOn: boolean;
+  remotes: RemoteCar[];
+  rank: RankRow[];
+  leaderboard: LeaderRow[];
+  roomCode: string | null;
 }
 
 const C = {
@@ -106,16 +139,28 @@ export function draw(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: n
   }
   ctx.globalAlpha = 1;
 
-  if (sc.ghost && sc.ghostOn) drawCar(ctx, sc.ghost, 0, true);
-  drawCar(ctx, sc.car, sc.state.airTicks, false);
+  if (sc.ghost && sc.ghostOn) drawCar(ctx, sc.ghost, 0, { ghost: true });
+  // remote players: light colored shadows of other connected cars
+  if (sc.othersOn) {
+    for (const r of sc.remotes) drawCar(ctx, r.pose, r.air, { remote: true, color: r.color });
+  }
+  drawCar(ctx, sc.car, sc.state.airTicks, { color: sc.selfColor });
 
   drawHud(ctx, w, h, dpr, sc);
 }
 
-function drawCar(ctx: CanvasRenderingContext2D, p: Pose, air: number, ghost: boolean) {
+interface CarStyle {
+  ghost?: boolean; // the personal best-time replay
+  remote?: boolean; // another connected player
+  color?: string; // body color (self + remotes)
+}
+
+function drawCar(ctx: CanvasRenderingContext2D, p: Pose, air: number, style: CarStyle) {
+  const { ghost = false, remote = false } = style;
+  const faded = ghost || remote;
   const lift = air > 0 ? Math.sin(Math.min(1, air / 66) * Math.PI) : 0; // visual only
   ctx.save();
-  if (!ghost) { // shadow
+  if (!faded) { // ground shadow only for the solid local car
     ctx.fillStyle = "rgba(5,12,20,0.28)";
     ctx.beginPath();
     ctx.ellipse(p.x + 0.12 + lift * 0.5, p.y + 0.15 + lift * 0.7, 0.95 * CAR_SCALE, 0.55 * CAR_SCALE, Math.atan2(p.hy, p.hx), 0, Math.PI * 2);
@@ -125,12 +170,15 @@ function drawCar(ctx: CanvasRenderingContext2D, p: Pose, air: number, ghost: boo
   ctx.rotate(Math.atan2(p.hy, p.hx));
   const s = CAR_SCALE * (1 + lift * 0.18);
   ctx.scale(s, s);
-  ctx.fillStyle = ghost ? C.ghost : C.car;
+  // remote cars are a very light tint of their color; ghost uses the blue ghost color
+  ctx.globalAlpha = remote ? 0.38 : 1;
+  ctx.fillStyle = ghost ? C.ghost : (style.color ?? C.car);
   ctx.beginPath(); ctx.roundRect(-0.8, -0.45, 1.6, 0.9, 0.28); ctx.fill();
-  if (!ghost) {
+  if (!faded) {
     ctx.fillStyle = C.carDark; ctx.fillRect(-0.8, -0.45, 0.35, 0.9); // rear
     ctx.fillStyle = C.glass; ctx.beginPath(); ctx.roundRect(0.05, -0.3, 0.5, 0.6, 0.12); ctx.fill();
   }
+  ctx.globalAlpha = 1;
   ctx.restore();
 }
 
@@ -149,9 +197,15 @@ function drawHud(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: numbe
   ctx.fillText(`Best ${sc.bestText}`, w - pad, pad + 6);
   sc.splits.forEach((s, i) => ctx.fillText(`${i + 1}  ${s}`, w - pad, pad + 32 + i * 20));
 
+  // shared lap-time leaderboard (top-right, below personal splits)
+  drawLeaderboard(ctx, w, pad, sc);
+  // connected-players rank (left side)
+  drawRank(ctx, pad, sc);
+
   ctx.textAlign = "center"; ctx.textBaseline = "bottom"; ctx.fillStyle = C.muted;
   ctx.font = `500 ${Math.round(Math.min(15, w * 0.015))}px ${SANS}`;
-  ctx.fillText(`← → steer   R restart   G ghost ${sc.ghostOn ? "on" : "off"}`, w / 2, h - pad * 0.8);
+  const room = sc.roomCode ? `   room ${sc.roomCode}` : "";
+  ctx.fillText(`← → steer   R restart   G ghost ${sc.ghostOn ? "on" : "off"}   O others ${sc.othersOn ? "on" : "off"}${room}`, w / 2, h - pad * 0.8);
 
   if (sc.phase === "countdown" && sc.countdownText) {
     ctx.textBaseline = "middle"; ctx.fillStyle = C.text;
@@ -168,4 +222,59 @@ function drawHud(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: numbe
     ctx.fillStyle = C.muted; ctx.font = `500 15px ${SANS}`;
     ctx.fillText("Press R to race again", w / 2, by + 126);
   }
+}
+
+/** Connected-players rank (1..15) on the left side. */
+function drawRank(ctx: CanvasRenderingContext2D, pad: number, sc: Scene) {
+  if (sc.rank.length === 0) return;
+  const x = pad;
+  const top = pad + 86;
+  const rowH = 22;
+  const sw = 11; // color swatch size
+
+  ctx.textAlign = "left"; ctx.textBaseline = "middle";
+  ctx.font = `600 12px ${SANS}`; ctx.fillStyle = C.muted;
+  ctx.fillText(`PLAYERS ${sc.rank.length}/15`, x, top - 14);
+
+  ctx.font = `500 13px ${SANS}`;
+  sc.rank.forEach((row, i) => {
+    const y = top + i * rowH + rowH / 2;
+    ctx.fillStyle = C.muted; ctx.textAlign = "right";
+    ctx.fillText(`${i + 1}`, x + 14, y);
+    ctx.fillStyle = row.color;
+    ctx.fillRect(x + 20, y - sw / 2, sw, sw);
+    ctx.textAlign = "left";
+    ctx.fillStyle = row.isSelf ? C.text : C.muted;
+    const lapTxt = row.finished ? "fin" : `L${row.lap}`;
+    const name = row.name.length > 10 ? row.name.slice(0, 10) + "…" : row.name;
+    ctx.fillText(`${name}  ${lapTxt}`, x + 20 + sw + 8, y);
+  });
+}
+
+/** Shared lap-time leaderboard (best times), top-right under the splits. */
+function drawLeaderboard(ctx: CanvasRenderingContext2D, w: number, pad: number, sc: Scene) {
+  if (sc.leaderboard.length === 0) return;
+  const x = w - pad;
+  const top = pad + 32 + Math.max(sc.splits.length, 0) * 20 + 26;
+  const rowH = 20;
+  const sw = 10;
+
+  ctx.textAlign = "right"; ctx.textBaseline = "middle";
+  ctx.font = `600 12px ${SANS}`; ctx.fillStyle = C.muted;
+  ctx.fillText("BEST TIMES", x, top - 14);
+
+  ctx.font = `500 13px ${MONO}`;
+  sc.leaderboard.slice(0, 8).forEach((row, i) => {
+    const y = top + i * rowH + rowH / 2;
+    ctx.textAlign = "right";
+    ctx.fillStyle = row.isSelf ? C.text : C.muted;
+    ctx.fillText(row.timeText, x, y);
+    const name = row.name.length > 8 ? row.name.slice(0, 8) + "…" : row.name;
+    const tw = ctx.measureText(row.timeText).width;
+    ctx.fillText(name, x - tw - 10, y);
+    // color swatch to the left of the name
+    const nw = ctx.measureText(name).width;
+    ctx.fillStyle = row.color;
+    ctx.fillRect(x - tw - 10 - nw - 8 - sw, y - sw / 2, sw, sw);
+  });
 }
