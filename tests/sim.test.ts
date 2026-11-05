@@ -30,6 +30,22 @@ describe("simulation", () => {
     expect(Math.hypot(s.vx, s.vy)).toBeLessThan(12 * 0.5);
   });
 
+  it("a head-on hit does not trap the car: steering pivots it away from the wall and it speeds up again", () => {
+    for (const [hy, steer] of [[1, IN_LEFT], [1, IN_RIGHT], [-1, IN_LEFT], [-1, IN_RIGHT]] as const) {
+      const s = createState(OVAL_1);
+      // middle of the bottom straight, flat against the outer (hy=1) or inner (hy=-1) wall
+      s.x = 0; s.y = 5.5; s.hx = 0; s.hy = hy; s.vx = 0; s.vy = 16 * hy;
+      for (let i = 0; i < 60; i++) step(s, OVAL_1, 0); // hit it and come to a stop
+      expect(Math.hypot(s.vx, s.vy)).toBeLessThan(1);
+      let top = 0;
+      for (let i = 0; i < 120 * 4; i++) {
+        step(s, OVAL_1, steer);
+        top = Math.max(top, Math.hypot(s.vx, s.vy));
+      }
+      expect(top).toBeGreaterThan(5); // before: stayed < 1 m/s forever
+    }
+  });
+
   it("never leaves the track, even when steering the wrong way all the time", () => {
     const s = createState(OVAL_1);
     for (let i = 0; i < 120 * 20; i++) {
@@ -170,6 +186,7 @@ describe("replay and determinism", () => {
   });
 });
 
+// SIM_VERSION=6 (wall pivot: only changes runs that touch a wall; this golden run doesn't, so the values are the same as v5).
 // SIM_VERSION=5: times in subticks (1/65536 tick). Same 2837 ticks as v4 (stop criterion unchanged);
 // the finish is at 185871260 subticks ≈ 2836.18 ticks ≈ 23.635 s.
 const GOLDEN = { ticks: 2837, finishSubticks: 185871260, hash: 3224411183 };
