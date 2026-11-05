@@ -186,7 +186,8 @@ describe("replay and determinism", () => {
   });
 });
 
+// SIM_VERSION=7: DRAG_SNOW 2.0 -> 2.5 (slower in the snow): 2837 -> 2840 ticks, finish at 186067473 subticks.
 // SIM_VERSION=6 (wall pivot: only changes runs that touch a wall; this golden run doesn't, so the values are the same as v5).
 // SIM_VERSION=5: times in subticks (1/65536 tick). Same 2837 ticks as v4 (stop criterion unchanged);
 // the finish is at 185871260 subticks ≈ 2836.18 ticks ≈ 23.635 s.
-const GOLDEN = { ticks: 2837, finishSubticks: 185871260, hash: 3224411183 };
+const GOLDEN = { ticks: 2840, finishSubticks: 186067473, hash: 2393277937 };

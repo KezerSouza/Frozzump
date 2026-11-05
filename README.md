@@ -20,8 +20,9 @@ does, and in multiplayer no player color is a light blue, so it can't be mistake
 
 - **Livre** (free) — everyone races on their own and chases each other's best time.
 - **Corrida** (race) — everyone starts a 5-lap race together and the standings are shown.
-  The next round starts 20 s after the first finisher, or right away when the host presses
-  `R` / **Reiniciar corrida** (available once someone finished). Players who join mid-round
+  The next round starts 20 s after the first finisher, or earlier when the host presses
+  `R` / **Reiniciar corrida** (available 5 s after the first finisher, so everyone can see the
+  results and the others can finish; the host enforces it). Players who join mid-round
   wait for the next one. Positions are by verified race time.
 
 The host is the authority for color assignment, the live player rank (left) and the

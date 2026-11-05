@@ -3,8 +3,10 @@ import {
   createState, decodeReplay, encodeReplay, fromBase64, step, toBase64, type CarState,
 } from "../sim";
 import { Room, type RemoteInputBatch } from "../net/room";
+import { restartWaitMs } from "../net/round";
 import { FREE_GAME, type GameMode, type GameState, type LeaderEntry, type PlayerInfo } from "../net/protocol";
 import { Keys } from "./input";
+import { advanceRemote, pose } from "./remote";
 import { mountLobby, mountRoomBar, type LobbyHandle } from "./net-ui";
 import {
   draw, type LeaderRow, type Particle, type Pose, type RaceRow, type RaceView, type RankRow, type RemoteCar, type Scene,
@@ -35,8 +37,16 @@ let best: Best | null = loadBest();
 let newRecord = false;
 let ghostOn = localStorage.getItem(GHOST_KEY) !== "0";
 let othersOn = localStorage.getItem(OTHERS_KEY) !== "0";
-let acc = 0;
+let acc = 0; // our own sim: wall-clock time not yet turned into ticks
+let remoteAcc = 0; // same for the remote cars (they run on wall-clock time too, independent of our phase)
 let last = performance.now();
+// Tab in the background: rAF is paused there, so the sim is driven by a Worker ticker instead and
+// our car drives with no input (see pump / startBackgroundTicker).
+let away = document.hidden;
+/** Longest stretch of wall-clock time simulated in one go (a laptop that slept, a debugger pause). */
+const MAX_CATCHUP_S = 600;
+/** Max input ticks per network message when flushing a long catch-up. */
+const SEND_CHUNK = 1200;
 
 // ── Multiplayer state ────────────────────────────────────────
 let room: Room | null = null;
@@ -63,9 +73,6 @@ interface Remote {
 }
 const remotes = new Map<string, Remote>();
 
-function pose(s: CarState): Pose {
-  return { x: s.x, y: s.y, hx: s.hx, hy: s.hy };
-}
 function lerpPose(a: Pose, b: Pose, t: number): Pose {
   const hx = a.hx + (b.hx - a.hx) * t, hy = a.hy + (b.hy - a.hy) * t;
   const n = Math.hypot(hx, hy) || 1;
@@ -133,7 +140,7 @@ function onFinish() {
 keys.onRestart = () => {
   if (inRace()) {
     // races restart for everyone together; only the host can skip the wait
-    if (room?.isHost && game.results.length > 0) room.restartRound();
+    if (room?.isHost && restartWaitNow(performance.now()) === 0) room.restartRound(); // the host re-checks
     return;
   }
   reset();
@@ -226,18 +233,17 @@ function onGame(g: GameState) {
   }
 }
 
+/** Ms until the host may restart this race round (0 = now); null until someone has finished. */
+function restartWaitNow(now: number): number | null {
+  return nextDeadline === null || game.results.length === 0 ? null : restartWaitMs(nextDeadline - now);
+}
+
 function isParticipant(id: string): boolean {
   return game.participants.includes(id);
 }
 
 function advanceRemotes() {
-  for (const r of remotes.values()) {
-    r.prev = pose(r.state);
-    if (r.queued.length > 0 && !r.state.finished) {
-      step(r.state, track, r.queued.shift()!);
-    }
-    // if starved of inputs, the car simply holds position (no extrapolation)
-  }
+  for (const r of remotes.values()) advanceRemote(r, track);
 }
 
 // ── Rank + leaderboard views ─────────────────────────────────
@@ -309,11 +315,16 @@ function buildRaceView(now: number): RaceView | null {
     nextText = s > 0 ? `Próxima corrida em ${s}s` : "Começando…";
   }
   const first = game.results[0];
+  const wait = restartWaitNow(now);
   return {
     round: game.round,
     rows,
     nextText,
-    hostHint: room.isHost && game.results.length > 0 ? "R ou “Reiniciar corrida” para começar agora" : null,
+    hostHint: !room.isHost || wait === null
+      ? null
+      : wait > 0
+        ? `Reiniciar liberado em ${Math.ceil(wait / 1000)}s`
+        : "R ou “Reiniciar corrida” para começar agora",
     banner: first && (phase === "racing" || phase === "countdown") ? `${first.name} terminou! ${nextText}` : null,
     showPanel: phase === "finished" || phase === "waiting",
     waiting: phase === "waiting",
@@ -330,36 +341,59 @@ function buildLeaderboard(): LeaderRow[] {
   }));
 }
 
-function frame(now: number) {
-  const dt = Math.min(0.1, (now - last) / 1000);
+/**
+ * Advances the whole simulation to wall-clock time `now`: our car, the ghost and every remote car.
+ * Time is never lost: a frame that comes late (or a tab that was in the background) is simulated
+ * in full, up to MAX_CATCHUP_S. Safe to call as often as you like (it only consumes elapsed time).
+ * Returns the elapsed time in seconds.
+ */
+function pump(now: number): number {
+  // a rAF timestamp can be slightly older than a performance.now() the ticker already consumed
+  if (now < last) now = last;
+  const dt = Math.min(MAX_CATCHUP_S, (now - last) / 1000);
   last = now;
 
-  if (phase === "countdown" && now >= countdownEnd) phase = "racing";
+  if (phase === "countdown" && now >= countdownEnd) {
+    phase = "racing";
+    acc = Math.min(MAX_CATCHUP_S, (now - countdownEnd) / 1000); // exact start, not "this frame"
+  } else if (phase === "racing") {
+    acc += dt;
+  }
 
   if (phase === "racing") {
-    acc += dt;
     while (acc >= DT && phase === "racing") {
       prev = pose(car);
       if (ghost) prevGhost = pose(ghost);
 
-      const mask = keys.read();
+      // in the background we can't read the keyboard: drive with no input
+      const mask = away ? 0 : keys.read();
       inputs.push(mask);
       if (ghost && ghostInputs && ghost.tick < ghostInputs.length) step(ghost, track, ghostInputs[ghost.tick]);
       step(car, track, mask);
-      advanceRemotes();
       acc -= DT;
       if (car.finished) onFinish();
     }
-    spawnSnow(car);
-    // broadcast newly produced input ticks in a batch
-    if (room && inputs.length > sentUpTo) {
-      room.sendInput(sentUpTo, inputs.slice(sentUpTo));
-      sentUpTo = inputs.length;
+    // broadcast newly produced input ticks in a batch (chunked: a long catch-up can be thousands of ticks)
+    while (room && inputs.length > sentUpTo) {
+      const end = Math.min(inputs.length, sentUpTo + SEND_CHUNK);
+      room.sendInput(sentUpTo, inputs.slice(sentUpTo, end));
+      sentUpTo = end;
     }
-  } else {
-    // keep remote cars moving even while we're in countdown/finished
-    advanceRemotes();
   }
+
+  // remote cars advance on wall-clock time, whatever phase we are in
+  remoteAcc += dt;
+  while (remoteAcc >= DT) {
+    advanceRemotes();
+    remoteAcc -= DT;
+  }
+  return dt;
+}
+
+function frame(now: number) {
+  const dt = Math.min(0.1, pump(now)); // (the clamp is only for the cosmetic particles below)
+
+  if (phase === "racing") spawnSnow(car);
 
   for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; }
   particles = particles.filter((p) => p.life > 0);
@@ -368,6 +402,7 @@ function frame(now: number) {
   const cur = phase === "racing" ? lerpPose(prev, pose(car), alpha) : pose(car);
   const g = ghost && prevGhost ? (phase === "racing" ? lerpPose(prevGhost, pose(ghost), alpha) : pose(ghost)) : null;
 
+  const remoteAlpha = remoteAcc / DT;
   const remoteCars: RemoteCar[] = [];
   for (const r of remotes.values()) {
     // only draw shadows we can simulate correctly; in a race, only this round's racers
@@ -376,7 +411,7 @@ function frame(now: number) {
       id: r.info.id,
       name: r.info.name,
       color: r.info.color,
-      pose: lerpPose(r.prev, pose(r.state), alpha),
+      pose: lerpPose(r.prev, pose(r.state), remoteAlpha),
       air: r.state.airTicks,
     });
   }
@@ -399,7 +434,7 @@ function frame(now: number) {
     roomCode: room?.code ?? null,
     selfName: room && self ? self.name : null,
     modeText: room ? (race ? `corrida ${game.round}` : "modo livre") : null,
-    restartKey: !race || (!!room?.isHost && game.results.length > 0),
+    restartKey: !race || (!!room?.isHost && restartWaitNow(now) === 0),
     race: buildRaceView(now),
   };
   roomBar.update({
@@ -407,7 +442,8 @@ function frame(now: number) {
     code: room?.code ?? "",
     isHost: !!room?.isHost,
     mode: game.mode,
-    canRestart: race && game.results.length > 0,
+    canRestart: race && restartWaitNow(now) === 0,
+    restartInS: race && restartWaitNow(now) !== null ? Math.ceil(restartWaitNow(now)! / 1000) : null,
   });
 
   const dpr = window.devicePixelRatio || 1;
@@ -481,6 +517,37 @@ function leaveRoom() {
 function setMode(mode: GameMode) {
   room?.setMode(mode);
 }
+
+// ── Background tabs ──────────────────────────────────────────
+// Browsers stop requestAnimationFrame in a hidden tab, which used to freeze our car for everyone
+// else (we stopped producing/sending ticks) and froze the world for us. Now the sim is driven by
+// wall-clock time and, while hidden, a ticker keeps it (and the input stream we send) running.
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden === away) return;
+  // Settle the time up to this instant under the OLD mode, so the gap is simulated as "away"
+  // (no input) when we come back, and as "present" (keys) when we leave.
+  pump(performance.now());
+  away = document.hidden;
+});
+
+/**
+ * Wakes pump() while the tab is hidden. Main-thread timers are throttled to ~1 Hz there, but timers
+ * in a dedicated Worker are not, so the Worker only posts a "tick" message. No game logic runs in it.
+ */
+function startBackgroundTicker() {
+  const wake = () => { if (away) pump(performance.now()); };
+  const fallback = () => setInterval(wake, 1000); // still correct (time is caught up), just bursty
+  try {
+    const url = URL.createObjectURL(new Blob(["setInterval(() => postMessage(0), 50);"], { type: "text/javascript" }));
+    const w = new Worker(url);
+    w.onmessage = wake;
+    w.onerror = () => { w.terminate(); fallback(); };
+  } catch {
+    fallback();
+  }
+}
+startBackgroundTicker();
 
 // Leave the room cleanly when the tab is closed/refreshed, so other players
 // drop our car immediately instead of seeing a frozen shadow.

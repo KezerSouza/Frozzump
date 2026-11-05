@@ -210,6 +210,16 @@ function drawNameTag(ctx: CanvasRenderingContext2D, x: number, y: number, name: 
   ctx.restore();
 }
 
+/**
+ * Darker shade of a "#rrggbb" body color for the rear of the car: each channel scaled by 0.66, which keeps
+ * the hue and the "feel" of the color. The original red keeps the hand-picked C.carDark.
+ */
+export function darken(hex: string): string {
+  if (hex.toLowerCase() === C.car) return C.carDark;
+  const ch = (i: number) => Math.round(parseInt(hex.slice(i, i + 2), 16) * 0.66).toString(16).padStart(2, "0");
+  return `#${ch(1)}${ch(3)}${ch(5)}`;
+}
+
 function drawCar(ctx: CanvasRenderingContext2D, p: Pose, air: number, style: CarStyle) {
   const { ghost = false, remote = false } = style;
   const faded = ghost || remote;
@@ -230,7 +240,7 @@ function drawCar(ctx: CanvasRenderingContext2D, p: Pose, air: number, style: Car
   ctx.fillStyle = ghost ? C.ghost : (style.color ?? C.car);
   ctx.beginPath(); ctx.roundRect(-0.8, -0.45, 1.6, 0.9, 0.28); ctx.fill();
   if (!faded) {
-    ctx.fillStyle = C.carDark; ctx.fillRect(-0.8, -0.45, 0.35, 0.9); // rear
+    ctx.fillStyle = darken(style.color ?? C.car); ctx.fillRect(-0.8, -0.45, 0.35, 0.9); // rear: a darker shade of the body
     ctx.fillStyle = C.glass; ctx.beginPath(); ctx.roundRect(0.05, -0.3, 0.5, 0.6, 0.12); ctx.fill();
   }
   ctx.globalAlpha = 1;
