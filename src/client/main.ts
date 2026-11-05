@@ -307,6 +307,7 @@ function connect(mode: "host" | "join", code: string, name: string) {
     onLeaderboard: (entries: LeaderEntry[]) => { leaderboard = entries; },
     onRemoteInput,
     onRemoteReset,
+    onRemoteLeave: (id: string) => { remotes.delete(id); },
     onError: (msg: string) => lobby.showError(msg),
     onStatus: (status: string) => {
       if (status === "open") {
@@ -314,13 +315,24 @@ function connect(mode: "host" | "join", code: string, name: string) {
         reset(); // fresh race once connected
       } else if (status === "closed" || status === "error") {
         room = null;
-        remotes.clear();
+        self = null;
+        roster = [];
+        leaderboard = [];
+        remotes.clear(); // drop every opponent car when the room ends
         lobby.reopen();
       }
     },
   };
   room = mode === "host" ? Room.host(code, name, events) : Room.join(code, name, events);
 }
+
+// Leave the room cleanly when the tab is closed/refreshed, so other players
+// drop our car immediately instead of seeing a frozen shadow.
+function leaveOnExit() {
+  room?.leave();
+}
+window.addEventListener("beforeunload", leaveOnExit);
+window.addEventListener("pagehide", leaveOnExit);
 
 lobby = mountLobby(({ mode, code, name }) => connect(mode, code, name));
 
