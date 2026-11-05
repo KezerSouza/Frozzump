@@ -57,5 +57,11 @@ export function fromBase64(b64: string): Uint8Array {
 export function verifyReplay(track: TrackDef, inputs: ArrayLike<number>) {
   const s = createState(track);
   for (let i = 0; i < inputs.length && !s.finished; i++) step(s, track, inputs[i]);
-  return { finished: s.finished, ticks: s.tick, hash: hashState(s), laps: s.lapTicks.slice() };
+  return {
+    finished: s.finished,
+    ticks: s.tick,
+    finishSubticks: s.finishSubticks,
+    lapSubticks: s.lapSubticks.slice(),
+    hash: hashState(s),
+  };
 }

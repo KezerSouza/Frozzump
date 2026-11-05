@@ -1,9 +1,9 @@
 import {
   AIR_TICKS, BOOST_SPEED, CAR_RADIUS, DRAG_SNOW, DRAG_TRACK, DT, IN_LEFT, IN_RIGHT,
   LAT_KEEP_AIR, LAT_KEEP_SNOW, LAT_KEEP_TRACK, MAX_YAW, STEER_AIR_SCALE, STEER_RATE,
-  THRUST, TOTAL_LAPS, V_REF, WALL_BOUNCE, WALL_IMPACT, WALL_KEEP, WALL_MIN_KEEP,
+  SUBTICKS_PER_TICK, THRUST, TOTAL_LAPS, V_REF, WALL_BOUNCE, WALL_IMPACT, WALL_KEEP, WALL_MIN_KEEP,
 } from "./params";
-import { crossedGate, inRects, type TrackDef } from "./track";
+import { gateCrossing, inRects, type TrackDef } from "./track";
 
 export interface CarState {
   x: number;
@@ -19,7 +19,8 @@ export interface CarState {
   laps: number;
   tick: number;
   finished: boolean;
-  lapTicks: number[]; // tick at which each lap was completed
+  lapSubticks: number[]; // race time (in subticks) at which each lap was completed
+  finishSubticks: number; // race time (in subticks) at the finish; 0 until finished
 }
 
 export function createState(track: TrackDef): CarState {
@@ -27,7 +28,7 @@ export function createState(track: TrackDef): CarState {
     x: track.start.x, y: track.start.y, vx: 0, vy: 0,
     hx: track.start.hx, hy: track.start.hy,
     steer: 0, airTicks: 0, onPad: false,
-    nextGate: 1, laps: 0, tick: 0, finished: false, lapTicks: [],
+    nextGate: 1, laps: 0, tick: 0, finished: false, lapSubticks: [], finishSubticks: 0,
   };
 }
 
@@ -104,11 +105,19 @@ export function step(s: CarState, track: TrackDef, input: number): void {
 
   // 8) Gates / laps
   for (let i = 0; i < track.gates.length; i++) {
-    if (i === s.nextGate && crossedGate(track.gates[i], px, py, s.x, s.y)) {
+    if (i !== s.nextGate) continue;
+    const t = gateCrossing(track.gates[i], px, py, s.x, s.y);
+    if (t >= 0) {
       if (i === 0) {
+        // Sub-tick time: this step covers [(tick-1), tick] (s.tick was already incremented),
+        // and the line was crossed at fraction t of it. Integer, so no rounding drift.
+        const sub = (s.tick - 1) * SUBTICKS_PER_TICK + Math.floor(t * SUBTICKS_PER_TICK);
         s.laps++;
-        s.lapTicks.push(s.tick);
-        if (s.laps >= TOTAL_LAPS) s.finished = true;
+        s.lapSubticks.push(sub);
+        if (s.laps >= TOTAL_LAPS) {
+          s.finished = true;
+          s.finishSubticks = sub;
+        }
       }
       s.nextGate = (i + 1) % track.gates.length;
       break;
@@ -154,7 +163,11 @@ function resolveWalls(s: CarState, track: TrackDef): void {
 const view = new DataView(new ArrayBuffer(8));
 export function hashState(s: CarState): number {
   let h = 0x811c9dc5;
-  const nums = [s.x, s.y, s.vx, s.vy, s.hx, s.hy, s.steer, s.airTicks, s.nextGate, s.laps, s.tick];
+  const lastLap = s.lapSubticks.length > 0 ? s.lapSubticks[s.lapSubticks.length - 1] : 0;
+  const nums = [
+    s.x, s.y, s.vx, s.vy, s.hx, s.hy, s.steer, s.airTicks, s.nextGate, s.laps, s.tick,
+    s.finishSubticks, lastLap,
+  ];
   for (const n of nums) {
     view.setFloat64(0, n);
     for (let i = 0; i < 8; i++) {

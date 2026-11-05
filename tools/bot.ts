@@ -1,6 +1,8 @@
 // Simple bot to tune the track and physics WITHOUT playing by hand.
 // (Lives outside src/sim, so it may use Math.atan2 freely.)
-import { OVAL_1, createState, step, DT, IN_LEFT, IN_RIGHT, TOTAL_LAPS, inRects } from "../src/sim";
+import {
+  OVAL_1, createState, step, DT, IN_LEFT, IN_RIGHT, SUBTICKS_PER_TICK, TICK_RATE, TOTAL_LAPS, inRects,
+} from "../src/sim";
 
 const T = OVAL_1;
 const L = T.halfStraight, R = T.centerRadius;
@@ -50,8 +52,10 @@ export function runBot(useRamp: boolean, look = 5) {
 if (process.argv[1]?.endsWith("bot.ts")) {
   for (const useRamp of [false, true]) {
     const r = runBot(useRamp);
-    const laps = r.s.lapTicks.map((t, i, a) => ((t - (a[i - 1] ?? 0)) * DT).toFixed(2));
-    console.log(`ramp=${useRamp}  finished=${r.s.finished}  total=${(r.s.tick * DT).toFixed(2)}s  laps=[${laps.join(", ")}]  ` +
+    const sec = (sub: number) => sub / (TICK_RATE * SUBTICKS_PER_TICK);
+    const laps = r.s.lapSubticks.map((t, i, a) => sec(t - (a[i - 1] ?? 0)).toFixed(3));
+    const total = r.s.finished ? sec(r.s.finishSubticks) : r.s.tick * DT;
+    console.log(`ramp=${useRamp}  finished=${r.s.finished}  total=${total.toFixed(3)}s  laps=[${laps.join(", ")}]  ` +
       `wall=${(r.wallTicks * DT).toFixed(2)}s snow=${(r.snowTicks * DT).toFixed(2)}s  air=${(r.airTicks * DT).toFixed(2)}s  vmax=${r.maxV.toFixed(1)}m/s  done=${r.s.laps}/${TOTAL_LAPS}`);
   }
 }

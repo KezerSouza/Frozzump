@@ -3,10 +3,12 @@
 // => bump SIM_VERSION (and the leaderboard becomes a new one).
 // ─────────────────────────────────────────────────────────────
 
-export const SIM_VERSION = 4;
+export const SIM_VERSION = 5;
 
 export const TICK_RATE = 120;
 export const DT = 1 / TICK_RATE;
+// Race/lap times are integers in subticks (1/65536 of a tick). Power of 2 => t * 65536 is exact.
+export const SUBTICKS_PER_TICK = 65536;
 export const TOTAL_LAPS = 5;
 
 // Input (bitmask, 1 byte per tick). Steering only: the car accelerates on its own.

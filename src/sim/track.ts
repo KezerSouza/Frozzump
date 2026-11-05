@@ -60,26 +60,29 @@ export function inRects(x: number, y: number, rects: Rect[]): boolean {
   return false;
 }
 
-/** Did the move (p0 → p1) cross the gate in the valid direction? Uses only + - * and comparisons. */
-export function crossedGate(
-  g: Gate,
-  x0: number,
-  y0: number,
-  x1: number,
-  y1: number,
-): boolean {
+/**
+ * Fraction t ∈ [0,1] of the move (p0 → p1) at which it crossed the gate in the valid direction,
+ * or -1 if it did not cross (or crossed the wrong way). Uses only + - * / and comparisons.
+ * A move that ends exactly on the line returns t = 1; the next move (starting on the line)
+ * does not count again, because d0 = 0 is treated as "not > 0", like d1 here.
+ */
+export function gateCrossing(g: Gate, x0: number, y0: number, x1: number, y1: number): number {
   const mx = x1 - x0;
   const my = y1 - y0;
-  if (mx * g.dx + my * g.dy <= 0) return false; // wrong direction
+  if (mx * g.dx + my * g.dy <= 0) return -1; // wrong direction
 
   const gx = g.bx - g.ax;
   const gy = g.by - g.ay;
   // which side of the gate each end of the move is on
   const d0 = gx * (y0 - g.ay) - gy * (x0 - g.ax);
   const d1 = gx * (y1 - g.ay) - gy * (x1 - g.ax);
-  if (d0 > 0 === d1 > 0) return false;
+  if (d0 > 0 === d1 > 0) return -1;
   // which side of the move each end of the gate is on
   const e0 = mx * (g.ay - y0) - my * (g.ax - x0);
   const e1 = mx * (g.by - y0) - my * (g.bx - x0);
-  return e0 > 0 !== e1 > 0;
+  if (e0 > 0 === e1 > 0) return -1;
+  return d0 / (d0 - d1); // d0 and d1 are on opposite sides, so the denominator is never 0
 }
+
+/** Did the move (p0 → p1) cross the gate in the valid direction? */
+export const crossedGate = (...a: Parameters<typeof gateCrossing>): boolean => gateCrossing(...a) >= 0;

@@ -24,12 +24,12 @@ export interface PlayerInfo {
   isHost: boolean;
 }
 
-/** One entry of the shared lap-time leaderboard (host-verified ticks). */
+/** One entry of the shared race-time leaderboard (host-verified). */
 export interface LeaderEntry {
   id: PlayerId;
   name: string;
   color: string;
-  ticks: number; // total race time in ticks (lower is better)
+  time: number; // total race time in subticks = verifyReplay().finishSubticks (lower is better)
 }
 
 // ── Client → Host ──────────────────────────────────────────────
