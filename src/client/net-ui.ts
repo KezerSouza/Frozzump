@@ -1,9 +1,13 @@
 // ─────────────────────────────────────────────────────────────
 // Lobby overlay: pick a nickname, then host or join a room by code.
-// Pure DOM; it sits on top of the canvas and hides once connected.
+// Pure DOM; it sits on top of the canvas. Hidden by default: the game starts
+// in solo mode and the lobby only opens from the "Multiplayer" button (or M).
+//
+// Room bar: small top-center bar with the Multiplayer button (solo) or the
+// room code, host controls (mode, restart) and "Sair" (in a room).
 // ─────────────────────────────────────────────────────────────
 
-import { makeRoomCode } from "../net/protocol";
+import { MAX_NAME_LEN, makeRoomCode, type GameMode } from "../net/protocol";
 
 export interface LobbyResult {
   mode: "host" | "join";
@@ -20,18 +24,18 @@ export interface LobbyHandle {
   setStatus: (msg: string) => void;
   /** Remove the overlay once we're racing. */
   close: () => void;
-  /** Re-open the lobby (e.g. after disconnect). */
+  /** Re-open the lobby (Multiplayer button, or after a disconnect). */
   reopen: () => void;
 }
 
-export function mountLobby(onStart: (r: LobbyResult) => void): LobbyHandle {
+export function mountLobby(onStart: (r: LobbyResult) => void, onCancel: () => void): LobbyHandle {
   const root = document.createElement("div");
   root.id = "lobby";
   root.innerHTML = `
     <style>
       #lobby {
         position: fixed; inset: 0; z-index: 10;
-        display: flex; align-items: center; justify-content: center;
+        display: none; align-items: center; justify-content: center;
         background: rgba(8,16,28,0.82); backdrop-filter: blur(4px);
         font-family: "Avenir Next","Segoe UI",system-ui,sans-serif; color: #e8f1f7;
       }
@@ -60,13 +64,17 @@ export function mountLobby(onStart: (r: LobbyResult) => void): LobbyHandle {
       #lobby .msg.err { color: #ff8a3d; }
       #lobby .msg.ok { color: #45d483; }
       #lobby .hint { margin-top: 10px; font-size: 12px; color: #6f879c; }
+      #lobby button.link {
+        flex: none; display: block; width: 100%; margin-top: 12px; padding: 8px;
+        background: transparent; color: #8aa3b8; font-weight: 500; text-decoration: underline;
+      }
     </style>
     <div class="card">
       <h1>Snow Go — multiplayer</h1>
       <p class="sub">Até 15 jogadores na mesma pista, P2P (WebRTC).</p>
 
       <label for="name">Seu apelido</label>
-      <input id="name" maxlength="16" placeholder="Ex.: Nina" autocomplete="off" />
+      <input id="name" maxlength="${MAX_NAME_LEN}" placeholder="Ex.: Nina" autocomplete="off" />
 
       <label for="code">Código da sala</label>
       <input id="code" maxlength="6" placeholder="ABCD" autocomplete="off" />
@@ -77,6 +85,7 @@ export function mountLobby(onStart: (r: LobbyResult) => void): LobbyHandle {
       </div>
       <div class="msg" id="msg"></div>
       <div class="hint">Criar sala gera um código — compartilhe com os amigos. Entrar pede o código de uma sala existente.</div>
+      <button class="link" id="solo">Voltar ao solo</button>
     </div>
   `;
   document.body.appendChild(root);
@@ -86,11 +95,10 @@ export function mountLobby(onStart: (r: LobbyResult) => void): LobbyHandle {
   const hostBtn = root.querySelector<HTMLButtonElement>("#host")!;
   const joinBtn = root.querySelector<HTMLButtonElement>("#join")!;
   const msgEl = root.querySelector<HTMLDivElement>("#msg")!;
+  const soloBtn = root.querySelector<HTMLButtonElement>("#solo")!;
 
-  nameEl.value = localStorage.getItem(NAME_KEY) ?? "";
+  nameEl.value = (localStorage.getItem(NAME_KEY) ?? "").slice(0, MAX_NAME_LEN);
   codeEl.value = makeRoomCode();
-  if (!nameEl.value) nameEl.focus();
-  else codeEl.focus();
 
   function setMsg(text: string, cls: "" | "err" | "ok" = "") {
     msgEl.textContent = text;
@@ -101,7 +109,7 @@ export function mountLobby(onStart: (r: LobbyResult) => void): LobbyHandle {
     joinBtn.disabled = busy;
   }
   function go(mode: "host" | "join") {
-    const name = nameEl.value.trim();
+    const name = nameEl.value.trim().slice(0, MAX_NAME_LEN);
     const code = codeEl.value.trim().toUpperCase();
     if (!name) return setMsg("Digite um apelido.", "err");
     if (!code) return setMsg("Digite um código de sala.", "err");
@@ -116,6 +124,10 @@ export function mountLobby(onStart: (r: LobbyResult) => void): LobbyHandle {
   codeEl.addEventListener("keydown", (e) => {
     if (e.key === "Enter") go("join");
   });
+  soloBtn.addEventListener("click", () => onCancel());
+  root.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") onCancel();
+  });
 
   return {
     showError: (m) => {
@@ -129,6 +141,97 @@ export function mountLobby(onStart: (r: LobbyResult) => void): LobbyHandle {
     reopen: () => {
       setBusy(false);
       root.style.display = "flex";
+      if (!nameEl.value) nameEl.focus();
+      else codeEl.focus();
+    },
+  };
+}
+
+export interface RoomBarState {
+  inRoom: boolean;
+  code: string;
+  isHost: boolean;
+  mode: GameMode;
+  canRestart: boolean;
+}
+
+export interface RoomBarActions {
+  onMultiplayer: () => void;
+  onLeave: () => void;
+  onMode: (mode: GameMode) => void;
+  onRestart: () => void;
+}
+
+export function mountRoomBar(actions: RoomBarActions): { update: (s: RoomBarState) => void } {
+  const root = document.createElement("div");
+  root.id = "roombar";
+  root.innerHTML = `
+    <style>
+      #roombar {
+        position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 5;
+        display: flex; gap: 6px; align-items: center;
+        font-family: "Avenir Next","Segoe UI",system-ui,sans-serif; font-size: 13px; color: #e8f1f7;
+      }
+      #roombar .code {
+        padding: 6px 10px; border-radius: 8px; background: rgba(17,34,58,0.85);
+        font-family: ui-monospace, monospace; letter-spacing: 2px;
+      }
+      #roombar button {
+        border: 1px solid #2b4866; border-radius: 8px; padding: 6px 12px; font-size: 13px; font-weight: 600;
+        cursor: pointer; background: rgba(17,34,58,0.85); color: #e8f1f7;
+      }
+      #roombar button.on { background: #3da5ff; color: #07121f; border-color: #3da5ff; }
+      #roombar button:disabled { opacity: 0.45; cursor: default; }
+      #roombar .seg { display: flex; }
+      #roombar .seg button:first-child { border-radius: 8px 0 0 8px; }
+      #roombar .seg button:last-child { border-radius: 0 8px 8px 0; border-left: 0; }
+    </style>
+    <button id="rb-mp">Multiplayer</button>
+    <span class="code" id="rb-code"></span>
+    <span class="seg" id="rb-modes">
+      <button id="rb-free">Livre</button>
+      <button id="rb-race">Corrida</button>
+    </span>
+    <button id="rb-restart">Reiniciar corrida</button>
+    <button id="rb-leave">Sair</button>
+  `;
+  document.body.appendChild(root);
+
+  const $ = (id: string) => root.querySelector<HTMLElement>("#" + id)!;
+  const mp = $("rb-mp"), code = $("rb-code"), modes = $("rb-modes");
+  const free = $("rb-free"), race = $("rb-race");
+  const restart = $("rb-restart") as HTMLButtonElement, leave = $("rb-leave");
+
+  // blur after each click so Space/Enter while racing don't re-trigger the button
+  const on = (el: HTMLElement, fn: () => void) =>
+    el.addEventListener("click", () => {
+      el.blur();
+      fn();
+    });
+  on(mp, actions.onMultiplayer);
+  on(leave, actions.onLeave);
+  on(free, () => actions.onMode("free"));
+  on(race, () => actions.onMode("race"));
+  on(restart, actions.onRestart);
+
+  const show = (el: HTMLElement, v: boolean) => (el.style.display = v ? "" : "none");
+  let lastKey = "";
+
+  return {
+    update: (s) => {
+      const key = JSON.stringify(s);
+      if (key === lastKey) return; // called every frame: only touch the DOM on change
+      lastKey = key;
+      show(mp, !s.inRoom);
+      show(code, s.inRoom);
+      show(leave, s.inRoom);
+      show(modes, s.inRoom && s.isHost);
+      show(restart, s.inRoom && s.isHost && s.mode === "race");
+      code.textContent = `Sala ${s.code}`;
+      free.classList.toggle("on", s.mode === "free");
+      race.classList.toggle("on", s.mode === "race");
+      restart.disabled = !s.canRestart;
+      restart.title = s.canRestart ? "" : "Disponível quando o 1º colocado terminar";
     },
   };
 }

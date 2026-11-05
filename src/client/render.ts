@@ -19,6 +19,7 @@ export interface RankRow {
   lap: number; // 1..TOTAL_LAPS
   isSelf: boolean;
   finished: boolean;
+  waiting: boolean; // race mode: not in the current round (joined late)
 }
 
 /** One row of the shared lap-time leaderboard. */
@@ -29,13 +30,34 @@ export interface LeaderRow {
   isSelf: boolean;
 }
 
+/** One row of the race-mode standings. */
+export interface RaceRow {
+  pos: number;
+  name: string;
+  color: string;
+  status: string; // finish time, or current lap while still racing
+  isSelf: boolean;
+  done: boolean;
+}
+
+/** Race-mode overlay (null in free mode). */
+export interface RaceView {
+  round: number;
+  rows: RaceRow[];
+  nextText: string; // "Próxima corrida em 14s" / "Aguardando o 1º colocado…"
+  hostHint: string | null; // host only, once the round can be restarted
+  banner: string | null; // shown while still racing after someone finished
+  showPanel: boolean; // local player finished or is waiting for the next round
+  waiting: boolean;
+}
+
 export interface Scene {
   track: TrackDef;
   car: Pose;
   state: CarState;
   ghost: Pose | null;
   particles: Particle[];
-  phase: "countdown" | "racing" | "finished";
+  phase: "countdown" | "racing" | "finished" | "waiting";
   countdownText: string;
   timeText: string;
   bestText: string;
@@ -49,6 +71,10 @@ export interface Scene {
   rank: RankRow[];
   leaderboard: LeaderRow[];
   roomCode: string | null;
+  selfName: string | null; // nick drawn above our car (only inside a room)
+  modeText: string | null; // "modo livre" / "corrida 3" (only inside a room)
+  restartKey: boolean; // whether R does something right now (footer hint)
+  race: RaceView | null;
 }
 
 const C = {
@@ -88,7 +114,8 @@ export function draw(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: n
 
   // fixed camera showing the whole track (as in the original minigame)
   const scale = Math.min(w / (2 * (L + Ro) + 4), h / (2 * Ro + 7));
-  ctx.setTransform(dpr * scale, 0, 0, dpr * scale, (dpr * w) / 2, (dpr * (h / 2 + 18)));
+  const ox = w / 2, oy = h / 2 + 18; // screen position (CSS px) of the world origin
+  ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * ox, dpr * oy);
 
   // track + infield
   ctx.beginPath(); stadium(ctx, L, Ro); ctx.fillStyle = C.track; ctx.fill();
@@ -146,6 +173,17 @@ export function draw(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: n
   }
   drawCar(ctx, sc.car, sc.state.airTicks, { color: sc.selfColor });
 
+  // nicknames above the cars (screen space so text stays crisp at any zoom).
+  // The personal ghost never gets one: that is what tells it apart from other players.
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const tag = (p: Pose, air: number, name: string, color: string, alpha: number) => {
+    const sx = ox + p.x * scale;
+    const sy = oy + (p.y - liftOf(air) * 0.5 - CAR_SCALE * 0.95) * scale;
+    drawNameTag(ctx, sx, sy, name, color, alpha);
+  };
+  if (sc.othersOn) for (const r of sc.remotes) tag(r.pose, r.air, r.name, r.color, 0.65);
+  if (sc.selfName) tag(sc.car, sc.state.airTicks, sc.selfName, sc.selfColor, 1);
+
   drawHud(ctx, w, h, dpr, sc);
 }
 
@@ -155,10 +193,27 @@ interface CarStyle {
   color?: string; // body color (self + remotes)
 }
 
+/** Visual jump height 0..1 (visual only, so Math.sin is fine here). */
+function liftOf(air: number): number {
+  return air > 0 ? Math.sin(Math.min(1, air / 66) * Math.PI) : 0;
+}
+
+function drawNameTag(ctx: CanvasRenderingContext2D, x: number, y: number, name: string, color: string, alpha: number) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.font = `600 12px ${SANS}`;
+  ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+  ctx.lineJoin = "round"; ctx.lineWidth = 1.5; ctx.strokeStyle = "#000"; // thin black outline
+  ctx.strokeText(name, x, y);
+  ctx.fillStyle = color;
+  ctx.fillText(name, x, y);
+  ctx.restore();
+}
+
 function drawCar(ctx: CanvasRenderingContext2D, p: Pose, air: number, style: CarStyle) {
   const { ghost = false, remote = false } = style;
   const faded = ghost || remote;
-  const lift = air > 0 ? Math.sin(Math.min(1, air / 66) * Math.PI) : 0; // visual only
+  const lift = liftOf(air);
   ctx.save();
   if (!faded) { // ground shadow only for the solid local car
     ctx.fillStyle = "rgba(5,12,20,0.28)";
@@ -204,15 +259,19 @@ function drawHud(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: numbe
 
   ctx.textAlign = "center"; ctx.textBaseline = "bottom"; ctx.fillStyle = C.muted;
   ctx.font = `500 ${Math.round(Math.min(15, w * 0.015))}px ${SANS}`;
-  const room = sc.roomCode ? `   room ${sc.roomCode}` : "";
-  ctx.fillText(`← → steer   R restart   G ghost ${sc.ghostOn ? "on" : "off"}   O others ${sc.othersOn ? "on" : "off"}${room}`, w / 2, h - pad * 0.8);
+  const room = sc.roomCode ? `   room ${sc.roomCode}${sc.modeText ? ` · ${sc.modeText}` : ""}` : "   M multiplayer";
+  const restart = sc.restartKey ? "   R restart" : "";
+  ctx.fillText(`← → steer${restart}   G ghost ${sc.ghostOn ? "on" : "off"}   O others ${sc.othersOn ? "on" : "off"}${room}`, w / 2, h - pad * 0.8);
 
   if (sc.phase === "countdown" && sc.countdownText) {
     ctx.textBaseline = "middle"; ctx.fillStyle = C.text;
     ctx.font = `700 ${Math.round(Math.min(140, w * 0.14))}px ${SANS}`;
     ctx.fillText(sc.countdownText, w / 2, h * 0.42);
   }
-  if (sc.phase === "finished") {
+  if (sc.race) {
+    if (sc.race.showPanel) drawRacePanel(ctx, w, h, sc.race);
+    else if (sc.race.banner) drawBanner(ctx, w, h, sc.race.banner);
+  } else if (sc.phase === "finished") {
     const bw = Math.min(420, w - 32), bh = 170, bx = (w - bw) / 2, by = h * 0.3;
     ctx.fillStyle = "rgba(12,22,36,0.92)"; ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 14); ctx.fill();
     ctx.textBaseline = "top"; ctx.fillStyle = C.text;
@@ -221,6 +280,67 @@ function drawHud(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: numbe
     ctx.fillText(sc.newRecord ? "New record!" : `Your best: ${sc.bestText}`, w / 2, by + 92);
     ctx.fillStyle = C.muted; ctx.font = `500 15px ${SANS}`;
     ctx.fillText("Press R to race again", w / 2, by + 126);
+  }
+}
+
+/** Small notice under the top bar while still racing (someone already finished). */
+function drawBanner(ctx: CanvasRenderingContext2D, w: number, h: number, text: string) {
+  ctx.font = `600 15px ${SANS}`;
+  const tw = ctx.measureText(text).width;
+  const bw = Math.min(w - 32, tw + 32), bh = 32, bx = (w - bw) / 2, by = Math.max(56, h * 0.1);
+  ctx.fillStyle = "rgba(12,22,36,0.85)"; ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 10); ctx.fill();
+  ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = C.ramp;
+  ctx.fillText(text, w / 2, by + bh / 2, bw - 16);
+}
+
+/** Race-mode standings: shown once we finished, or while waiting for the next round. */
+function drawRacePanel(ctx: CanvasRenderingContext2D, w: number, h: number, r: RaceView) {
+  const rowH = 24;
+  const rows = r.rows.slice(0, 15);
+  const bw = Math.min(440, w - 32);
+  const bh = 64 + Math.max(1, rows.length) * rowH + 30 + (r.hostHint ? 22 : 0) + 12;
+  const bx = (w - bw) / 2, by = Math.max(56, (h - bh) * 0.4);
+  ctx.fillStyle = "rgba(12,22,36,0.92)"; ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 14); ctx.fill();
+
+  ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.fillStyle = C.text;
+  ctx.font = `700 20px ${SANS}`;
+  ctx.fillText(r.waiting ? "Aguardando a próxima corrida…" : `Corrida ${r.round} — Resultado`, w / 2, by + 16, bw - 24);
+  ctx.fillStyle = C.muted; ctx.font = `500 13px ${SANS}`;
+  ctx.fillText(r.waiting ? `Corrida ${r.round} em andamento` : `${TOTAL_LAPS} voltas`, w / 2, by + 42);
+
+  const top = by + 64, left = bx + 20, right = bx + bw - 20, sw = 11;
+  ctx.textBaseline = "middle";
+  if (rows.length === 0) {
+    ctx.textAlign = "center"; ctx.fillStyle = C.muted; ctx.font = `500 14px ${SANS}`;
+    ctx.fillText("—", w / 2, top + rowH / 2);
+  }
+  rows.forEach((row, i) => {
+    const y = top + i * rowH + rowH / 2;
+    if (row.isSelf) {
+      ctx.fillStyle = "rgba(255,255,255,0.06)";
+      ctx.fillRect(left - 8, y - rowH / 2 + 1, right - left + 16, rowH - 2);
+    }
+    ctx.font = `600 14px ${MONO}`; ctx.textAlign = "right";
+    ctx.fillStyle = row.done ? C.text : C.muted;
+    ctx.fillText(row.done ? `${row.pos}º` : "·", left + 24, y);
+    ctx.fillStyle = row.color; ctx.fillRect(left + 34, y - sw / 2, sw, sw);
+    ctx.font = `${row.isSelf ? 700 : 500} 14px ${SANS}`; ctx.textAlign = "left";
+    ctx.fillStyle = row.isSelf ? C.text : C.muted;
+    const statusW = 96;
+    ctx.fillText(row.name, left + 34 + sw + 8, y, right - statusW - (left + 34 + sw + 8) - 8);
+    ctx.font = `500 14px ${MONO}`; ctx.textAlign = "right";
+    ctx.fillStyle = row.done ? C.text : C.muted;
+    ctx.fillText(row.status, right, y);
+  });
+
+  let y = top + Math.max(1, rows.length) * rowH + 12;
+  ctx.textAlign = "center"; ctx.textBaseline = "top";
+  ctx.fillStyle = C.ramp; ctx.font = `600 15px ${SANS}`;
+  ctx.fillText(r.nextText, w / 2, y);
+  if (r.hostHint) {
+    y += 22;
+    ctx.fillStyle = C.muted; ctx.font = `500 13px ${SANS}`;
+    ctx.fillText(r.hostHint, w / 2, y);
   }
 }
 
@@ -245,7 +365,7 @@ function drawRank(ctx: CanvasRenderingContext2D, pad: number, sc: Scene) {
     ctx.fillRect(x + 20, y - sw / 2, sw, sw);
     ctx.textAlign = "left";
     ctx.fillStyle = row.isSelf ? C.text : C.muted;
-    const lapTxt = row.finished ? "fin" : `L${row.lap}`;
+    const lapTxt = row.waiting ? "—" : row.finished ? "fin" : `L${row.lap}`;
     const name = row.name.length > 10 ? row.name.slice(0, 10) + "…" : row.name;
     ctx.fillText(`${name}  ${lapTxt}`, x + 20 + sw + 8, y);
   });

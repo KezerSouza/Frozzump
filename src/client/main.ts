@@ -3,10 +3,12 @@ import {
   createState, decodeReplay, encodeReplay, fromBase64, step, toBase64, type CarState,
 } from "../sim";
 import { Room, type RemoteInputBatch } from "../net/room";
-import type { LeaderEntry, PlayerInfo } from "../net/protocol";
+import { FREE_GAME, type GameMode, type GameState, type LeaderEntry, type PlayerInfo } from "../net/protocol";
 import { Keys } from "./input";
-import { mountLobby, type LobbyHandle } from "./net-ui";
-import { draw, type LeaderRow, type Particle, type Pose, type RankRow, type RemoteCar, type Scene } from "./render";
+import { mountLobby, mountRoomBar, type LobbyHandle } from "./net-ui";
+import {
+  draw, type LeaderRow, type Particle, type Pose, type RaceRow, type RaceView, type RankRow, type RemoteCar, type Scene,
+} from "./render";
 
 const track = OVAL_1;
 const BEST_KEY = `snowgo:best:${track.id}:v${SIM_VERSION}`; // the physics version is part of the key
@@ -17,7 +19,7 @@ const canvas = document.getElementById("game") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d")!;
 const keys = new Keys();
 
-type Phase = "countdown" | "racing" | "finished";
+type Phase = "countdown" | "racing" | "finished" | "waiting"; // waiting = race mode, joined mid-round
 interface Best { time: number; replay: string } // time in subticks (= finishSubticks)
 
 let phase: Phase = "countdown";
@@ -42,6 +44,12 @@ let self: PlayerInfo | null = null;
 let roster: PlayerInfo[] = [];
 let leaderboard: LeaderEntry[] = [];
 let sentUpTo = 0; // how many of our input ticks we've already broadcast
+let game: GameState = FREE_GAME; // host-authoritative mode / race round
+let localRound = 0; // last race round we reacted to
+let nextDeadline: number | null = null; // performance.now() at which the next race round starts
+let leaving = false; // voluntary "Sair": don't reopen the lobby when the room closes
+
+const inRace = () => room !== null && game.mode === "race";
 
 /** A remote car we simulate locally by applying received input bytes. */
 interface Remote {
@@ -49,6 +57,9 @@ interface Remote {
   state: CarState;
   prev: Pose;
   queued: number[]; // inputs received but not yet applied (buffer)
+  // false until we see this player's race from tick 0 (we joined mid-race):
+  // applying a partial input stream from the start line would draw a wrong shadow
+  synced: boolean;
 }
 const remotes = new Map<string, Remote>();
 
@@ -84,7 +95,8 @@ function fmtSplits(lapSubticks: number[]): string[] {
   return lapSubticks.map((t, i, a) => fmtMs(subticksToMs(t) - subticksToMs(a[i - 1] ?? 0)));
 }
 
-function reset() {
+/** Restart our own race. `waiting` = race mode, sit at the start until the next round. */
+function reset(next: "countdown" | "waiting" = "countdown") {
   car = createState(track);
   prev = pose(car);
   inputs = [];
@@ -101,7 +113,7 @@ function reset() {
   }
   // our own restart doesn't reset remote players; they run their own races
   room?.sendReset();
-  phase = "countdown";
+  phase = next;
   countdownEnd = performance.now() + 3000;
 }
 
@@ -113,11 +125,19 @@ function onFinish() {
     localStorage.setItem(BEST_KEY, JSON.stringify(best));
     newRecord = true;
   }
-  // submit to the shared leaderboard (host verifies via verifyReplay)
-  room?.sendFinish(replay, car.finishSubticks);
+  // submit to the shared leaderboard (host verifies via verifyReplay); in race
+  // mode the round number lets the host place us in this round's standings
+  room?.sendFinish(replay, car.finishSubticks, inRace() ? localRound : 0);
 }
 
-keys.onRestart = reset;
+keys.onRestart = () => {
+  if (inRace()) {
+    // races restart for everyone together; only the host can skip the wait
+    if (room?.isHost && game.results.length > 0) room.restartRound();
+    return;
+  }
+  reset();
+};
 keys.onToggleGhost = () => {
   ghostOn = !ghostOn;
   localStorage.setItem(GHOST_KEY, ghostOn ? "1" : "0");
@@ -151,7 +171,7 @@ function syncRemotes() {
     live.add(p.id);
     if (!remotes.has(p.id)) {
       const st = createState(track);
-      remotes.set(p.id, { info: p, state: st, prev: pose(st), queued: [] });
+      remotes.set(p.id, { info: p, state: st, prev: pose(st), queued: [], synced: false });
     } else {
       remotes.get(p.id)!.info = p; // name/color may change
     }
@@ -165,6 +185,10 @@ function syncRemotes() {
 function onRemoteInput(b: RemoteInputBatch) {
   const r = remotes.get(b.id);
   if (!r) return;
+  if (!r.synced) {
+    if (b.startTick !== 0) return; // mid-race stream: wait for their next reset
+    r.synced = true;
+  }
   // Inputs are a contiguous per-tick stream. We buffer and apply them in
   // lock-step with our own sim loop (1 tick each). startTick lets us ignore
   // stale/duplicate batches.
@@ -183,6 +207,27 @@ function onRemoteReset(id: string) {
   r.state = st;
   r.prev = pose(st);
   r.queued = [];
+  r.synced = true; // their next input batch starts at tick 0
+}
+
+/** Mode / race round update from the host. */
+function onGame(g: GameState) {
+  const prevMode = game.mode;
+  game = g;
+  nextDeadline = g.nextInMs !== null ? performance.now() + g.nextInMs : null;
+  if (g.mode === "free") {
+    if (prevMode === "race") reset(); // back to free play: everyone restarts on their own
+    return;
+  }
+  if (g.round !== localRound) {
+    localRound = g.round;
+    const racing = !!self && g.participants.includes(self.id);
+    reset(racing ? "countdown" : "waiting");
+  }
+}
+
+function isParticipant(id: string): boolean {
+  return game.participants.includes(id);
 }
 
 function advanceRemotes() {
@@ -203,7 +248,8 @@ function buildRank(): RankRow[] {
   const push = (info: PlayerInfo, s: CarState, isSelf: boolean) => {
     // progress key: laps dominate, then gate index — higher is further ahead
     // finished cars rank above everyone, ordered by exact race time (subticks)
-    const key = s.finished ? 1e15 - s.finishSubticks : s.laps * 100 + s.nextGate;
+    const waiting = inRace() && !isParticipant(info.id);
+    const key = waiting ? -1 : progressKey(s);
     rows.push({
       key,
       row: {
@@ -212,6 +258,7 @@ function buildRank(): RankRow[] {
         lap: Math.min(s.laps + 1, TOTAL_LAPS),
         isSelf,
         finished: s.finished,
+        waiting,
       },
     });
   };
@@ -220,6 +267,57 @@ function buildRank(): RankRow[] {
   for (const r of remotes.values()) push(r.info, r.state, r.info.id === selfId);
   rows.sort((a, b) => b.key - a.key);
   return rows.map((r) => r.row);
+}
+
+/** Progress key: laps dominate, then gate index; finished cars first, by exact race time. */
+function progressKey(s: CarState): number {
+  return s.finished ? 1e15 - s.finishSubticks : s.laps * 100 + s.nextGate;
+}
+
+/** Race-mode standings: host-verified finishers, then the rest by live progress. */
+function buildRaceView(now: number): RaceView | null {
+  if (!room || game.mode !== "race") return null;
+  const selfId = self?.id;
+  const rows: RaceRow[] = game.results.map((r, i) => ({
+    pos: i + 1, name: r.name, color: r.color, status: fmtSubticks(r.time), isSelf: r.id === selfId, done: true,
+  }));
+  const confirmed = new Set(game.results.map((r) => r.id));
+  const pending: { row: RaceRow; key: number }[] = [];
+  for (const id of game.participants) {
+    if (confirmed.has(id)) continue;
+    const isSelf = id === selfId;
+    const remote = remotes.get(id);
+    const info = isSelf ? self : remote?.info;
+    const st = isSelf ? car : remote?.synced ? remote.state : null;
+    if (!info) continue;
+    pending.push({
+      key: st ? progressKey(st) : -1,
+      row: {
+        pos: 0, name: info.name, color: info.color, isSelf, done: false,
+        // finished locally but not yet confirmed by the host → show the time already
+        status: !st ? "correndo…" : st.finished ? fmtSubticks(st.finishSubticks) : `volta ${Math.min(st.laps + 1, TOTAL_LAPS)}`,
+      },
+    });
+  }
+  pending.sort((a, b) => b.key - a.key);
+  pending.forEach((p, i) => { p.row.pos = rows.length + i + 1; });
+  rows.push(...pending.map((p) => p.row));
+
+  let nextText = "Aguardando o 1º colocado terminar…";
+  if (nextDeadline !== null) {
+    const s = Math.ceil((nextDeadline - now) / 1000);
+    nextText = s > 0 ? `Próxima corrida em ${s}s` : "Começando…";
+  }
+  const first = game.results[0];
+  return {
+    round: game.round,
+    rows,
+    nextText,
+    hostHint: room.isHost && game.results.length > 0 ? "R ou “Reiniciar corrida” para começar agora" : null,
+    banner: first && (phase === "racing" || phase === "countdown") ? `${first.name} terminou! ${nextText}` : null,
+    showPanel: phase === "finished" || phase === "waiting",
+    waiting: phase === "waiting",
+  };
 }
 
 function buildLeaderboard(): LeaderRow[] {
@@ -272,6 +370,8 @@ function frame(now: number) {
 
   const remoteCars: RemoteCar[] = [];
   for (const r of remotes.values()) {
+    // only draw shadows we can simulate correctly; in a race, only this round's racers
+    if (!r.synced || (inRace() && !isParticipant(r.info.id))) continue;
     remoteCars.push({
       id: r.info.id,
       name: r.info.name,
@@ -281,9 +381,11 @@ function frame(now: number) {
     });
   }
 
+  const race = inRace();
   const secondsLeft = Math.ceil((countdownEnd - now) / 1000);
   const scene: Scene = {
-    track, car: cur, state: car, ghost: g, particles, phase,
+    // the personal ghost belongs to solo / free play, not to synchronized races
+    track, car: cur, state: car, ghost: race ? null : g, particles, phase,
     countdownText: phase === "countdown" ? String(Math.max(1, secondsLeft)) : "",
     timeText: fmtSubticks(car.finished ? car.finishSubticks : car.tick * SUBTICKS_PER_TICK),
     bestText: best ? fmtSubticks(best.time) : "—",
@@ -295,7 +397,18 @@ function frame(now: number) {
     rank: room ? buildRank() : [],
     leaderboard: buildLeaderboard(),
     roomCode: room?.code ?? null,
+    selfName: room && self ? self.name : null,
+    modeText: room ? (race ? `corrida ${game.round}` : "modo livre") : null,
+    restartKey: !race || (!!room?.isHost && game.results.length > 0),
+    race: buildRaceView(now),
   };
+  roomBar.update({
+    inRoom: !!room && !!self,
+    code: room?.code ?? "",
+    isHost: !!room?.isHost,
+    mode: game.mode,
+    canRestart: race && game.results.length > 0,
+  });
 
   const dpr = window.devicePixelRatio || 1;
   const w = window.innerWidth, h = window.innerHeight;
@@ -312,29 +425,61 @@ function frame(now: number) {
 let lobby: LobbyHandle;
 
 function connect(mode: "host" | "join", code: string, name: string) {
-  const events = {
-    onSelf: (info: PlayerInfo) => { self = info; },
-    onRoster: (players: PlayerInfo[]) => { roster = players; syncRemotes(); },
-    onLeaderboard: (entries: LeaderEntry[]) => { leaderboard = entries; },
-    onRemoteInput,
-    onRemoteReset,
-    onRemoteLeave: (id: string) => { remotes.delete(id); },
+  if (room) leaveRoom(); // never keep two rooms (e.g. retry while still connecting)
+  const ref: { room: Room | null } = { room: null };
+  const events = roomEvents(ref);
+  ref.room = mode === "host" ? Room.host(code, name, events) : Room.join(code, name, events);
+  room = ref.room;
+}
+
+function roomEvents(ref: { room: Room | null }) {
+  // events from a room that is no longer the current one are ignored
+  const live = () => ref.room !== null && room === ref.room;
+  return {
+    onSelf: (info: PlayerInfo) => { if (live()) self = info; },
+    onRoster: (players: PlayerInfo[]) => { if (live()) { roster = players; syncRemotes(); } },
+    onLeaderboard: (entries: LeaderEntry[]) => { if (live()) leaderboard = entries; },
+    onGame: (g: GameState) => { if (live()) onGame(g); },
+    onRemoteInput: (b: RemoteInputBatch) => { if (live()) onRemoteInput(b); },
+    onRemoteReset: (id: string) => { if (live()) onRemoteReset(id); },
+    onRemoteLeave: (id: string) => { if (live()) remotes.delete(id); },
     onError: (msg: string) => lobby.showError(msg),
     onStatus: (status: string) => {
+      if (!live()) return;
       if (status === "open") {
         lobby.close();
-        reset(); // fresh race once connected
+        reset(); // fresh race once connected (race mode may switch us to "waiting" right after)
       } else if (status === "closed" || status === "error") {
+        const r = ref.room!;
         room = null;
         self = null;
         roster = [];
         leaderboard = [];
+        game = FREE_GAME;
+        localRound = 0;
+        nextDeadline = null;
         remotes.clear(); // drop every opponent car when the room ends
-        lobby.reopen();
+        r.destroy(); // release the PeerJS peer (re-emits "closed", ignored: no longer live)
+        reset(); // back to solo
+        if (!leaving) lobby.reopen(); // show why we dropped (host left, room not found, …)
       }
     },
   };
-  room = mode === "host" ? Room.host(code, name, events) : Room.join(code, name, events);
+}
+
+/** Voluntary exit ("Sair" / "Voltar ao solo" while connecting): back to solo, lobby stays closed. */
+function leaveRoom() {
+  if (!room) return;
+  leaving = true;
+  try {
+    room.leave(); // destroy() → onStatus("closed") → state cleared synchronously
+  } finally {
+    leaving = false;
+  }
+}
+
+function setMode(mode: GameMode) {
+  room?.setMode(mode);
 }
 
 // Leave the room cleanly when the tab is closed/refreshed, so other players
@@ -345,7 +490,17 @@ function leaveOnExit() {
 window.addEventListener("beforeunload", leaveOnExit);
 window.addEventListener("pagehide", leaveOnExit);
 
-lobby = mountLobby(({ mode, code, name }) => connect(mode, code, name));
+lobby = mountLobby(
+  ({ mode, code, name }) => connect(mode, code, name),
+  () => { leaveRoom(); lobby.close(); }, // "Voltar ao solo" (also cancels a pending connection)
+);
+const roomBar = mountRoomBar({
+  onMultiplayer: () => lobby.reopen(),
+  onLeave: leaveRoom,
+  onMode: setMode,
+  onRestart: () => room?.restartRound(),
+});
+keys.onOpenLobby = () => { if (!room) lobby.reopen(); };
 
 reset();
 requestAnimationFrame(frame);
