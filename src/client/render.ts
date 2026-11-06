@@ -1,4 +1,8 @@
 import type { CarState, TrackDef } from "../sim";
+import type { CarModel } from "../net/protocol";
+import { drawCarBody } from "./cars";
+
+export { darken } from "./cars";
 
 /** The bigger HUD pieces (Best, Lap, controls guide, players, best times) are drawn at this multiple of their old size. */
 const UI_SCALE = 1.25;
@@ -11,6 +15,7 @@ export interface RemoteCar {
   id: string;
   name: string;
   color: string;
+  car: CarModel;
   pose: Pose;
   air: number;
 }
@@ -70,6 +75,7 @@ export interface Scene {
   ghostOn: boolean;
   // multiplayer
   selfColor: string;
+  selfCar: CarModel; // the personal ghost uses our model and color too
   othersOn: boolean;
   remotes: RemoteCar[];
   rank: RankRow[];
@@ -90,10 +96,6 @@ const C = {
   wall: "#35546f",
   ramp: "#ff8a3d",
   rampDark: "#c4571a",
-  car: "#e5412d",
-  carDark: "#9c2417",
-  glass: "#12202e",
-  ghost: "rgba(130,205,255,0.6)",
   text: "#e8f1f7",
   muted: "#8aa3b8",
 };
@@ -220,12 +222,12 @@ export function draw(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: n
   }
   ctx.globalAlpha = 1;
 
-  if (sc.ghost && sc.ghostOn) drawCar(ctx, sc.ghost, 0, { ghost: true });
+  if (sc.ghost && sc.ghostOn) drawCar(ctx, sc.ghost, 0, { ghost: true, color: sc.selfColor, car: sc.selfCar });
   // remote players: light colored shadows of other connected cars
   if (sc.othersOn) {
-    for (const r of sc.remotes) drawCar(ctx, r.pose, r.air, { remote: true, color: r.color });
+    for (const r of sc.remotes) drawCar(ctx, r.pose, r.air, { remote: true, color: r.color, car: r.car });
   }
-  drawCar(ctx, sc.car, sc.state.airTicks, { color: sc.selfColor });
+  drawCar(ctx, sc.car, sc.state.airTicks, { color: sc.selfColor, car: sc.selfCar });
 
   // nicknames above the cars (screen space so text stays crisp at any zoom).
   // The personal ghost never gets one: that is what tells it apart from other players.
@@ -245,6 +247,7 @@ interface CarStyle {
   ghost?: boolean; // the personal best-time replay
   remote?: boolean; // another connected player
   color?: string; // body color (self + remotes)
+  car: CarModel;
 }
 
 /** Visual jump height 0..1 (visual only, so Math.sin is fine here). */
@@ -264,16 +267,6 @@ function drawNameTag(ctx: CanvasRenderingContext2D, x: number, y: number, name: 
   ctx.restore();
 }
 
-/**
- * Darker shade of a "#rrggbb" body color for the rear of the car: each channel scaled by 0.66, which keeps
- * the hue and the "feel" of the color. The original red keeps the hand-picked C.carDark.
- */
-export function darken(hex: string): string {
-  if (hex.toLowerCase() === C.car) return C.carDark;
-  const ch = (i: number) => Math.round(parseInt(hex.slice(i, i + 2), 16) * 0.66).toString(16).padStart(2, "0");
-  return `#${ch(1)}${ch(3)}${ch(5)}`;
-}
-
 function drawCar(ctx: CanvasRenderingContext2D, p: Pose, air: number, style: CarStyle) {
   const { ghost = false, remote = false } = style;
   const faded = ghost || remote;
@@ -289,15 +282,10 @@ function drawCar(ctx: CanvasRenderingContext2D, p: Pose, air: number, style: Car
   ctx.rotate(Math.atan2(p.hy, p.hx));
   const s = CAR_SCALE * (1 + lift * 0.18);
   ctx.scale(s, s);
-  // remote cars are a very light tint of their color; ghost uses the blue ghost color
-  ctx.globalAlpha = remote ? 0.38 : 1;
-  ctx.fillStyle = ghost ? C.ghost : (style.color ?? C.car);
-  ctx.beginPath(); ctx.roundRect(-0.8, -0.45, 1.6, 0.9, 0.28); ctx.fill();
-  if (!faded) {
-    ctx.fillStyle = darken(style.color ?? C.car); ctx.fillRect(-0.8, -0.45, 0.35, 0.9); // rear: a darker shade of the body
-    ctx.fillStyle = C.glass; ctx.beginPath(); ctx.roundRect(0.05, -0.3, 0.5, 0.6, 0.12); ctx.fill();
-  }
-  ctx.globalAlpha = 1;
+  // faded cars are a silhouette in a light tint of their color: other players, and our own ghost
+  // (our color: in a room nobody else has it, and the ghost never gets a name tag)
+  const color = style.color ?? "#e5412d";
+  drawCarBody(ctx, style.car, color, ghost ? { fill: color, alpha: 0.45 } : remote ? { fill: color, alpha: 0.38 } : null);
   ctx.restore();
 }
 
@@ -329,7 +317,7 @@ function drawHud(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: numbe
   ctx.font = `500 ${Math.round(Math.min(15, w * 0.015) * UI_SCALE)}px ${SANS}`;
   const room = sc.roomCode ? `   room ${sc.roomCode}${sc.modeText ? ` · ${sc.modeText}` : ""}` : "   M multiplayer";
   const restart = sc.restartKey ? "   R restart" : "";
-  ctx.fillText(`← → steer${restart}   G ghost ${sc.ghostOn ? "on" : "off"}   O others ${sc.othersOn ? "on" : "off"}${room}`, w / 2, h - pad * 0.8);
+  ctx.fillText(`← → steer${restart}   G ghost ${sc.ghostOn ? "on" : "off"}   O others ${sc.othersOn ? "on" : "off"}   C car${room}`, w / 2, h - pad * 0.8);
 
   if (sc.phase === "countdown" && sc.countdownText) {
     ctx.textBaseline = "middle"; ctx.fillStyle = C.text;

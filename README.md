@@ -3,7 +3,19 @@
 Browser game inspired on the Snow Go minigame from Mario Party 9: an oval track, 5 laps,
 deep snow that slows you down, and a ramp that jumps you over it.
 Controls: ← → (or A/D) to steer, `R` to restart, `G` toggles your personal ghost,
-`O` toggles the other players' shadows, `M` opens the multiplayer lobby. The car accelerates on its own.
+`O` toggles the other players' shadows, `C` picks your car and color, `M` opens the multiplayer lobby.
+The car accelerates on its own.
+
+## Car and color
+
+The **Carro** button (top bar) or `C` opens the garage: three car models (Normal, Snowmobile, Bobsled)
+and the 15 colors as squares. The choice is remembered. The models are purely visual: all of them
+have the same collision circle, so nothing changes in the simulation (or in replays and times).
+
+Inside a room any number of players can drive the same model, but a **color belongs to one player**:
+a color someone already has is crossed out (✕) and can't be picked. You enter a room asking for your
+saved color; if it is taken the host gives you the first free one. Changing color also recolors your
+entries in the best-times board.
 
 ## Multiplayer (P2P, no server)
 
@@ -14,8 +26,8 @@ opens the lobby, where you pick a nickname (max 25 characters) and either:
 - **Create room** → you become the host and get a room code to share.
 - **Join** → type an existing room code.
 
-Inside a room every car shows its owner's nickname (your personal best-time ghost never
-does, and in multiplayer no player color is a light blue, so it can't be mistaken for it).
+Inside a room every car shows its owner's nickname. Your personal best-time ghost never
+does: it is a light shadow of your own car and color, and no other player can have your color.
 **Sair** returns to solo. The host picks the game mode in the top bar:
 
 - **Livre** (free) — everyone races on their own and chases each other's best time.
@@ -25,7 +37,7 @@ does, and in multiplayer no player color is a light blue, so it can't be mistake
   results and the others can finish; the host enforces it). Players who join mid-round
   wait for the next one. Positions are by verified race time.
 
-The host is the authority for color assignment, the live player rank (left) and the
+The host is the authority for color assignment (it refuses a color that is already taken), the live player rank (left) and the
 shared best-times leaderboard (right). Finished runs are submitted as replays and
 verified with `verifyReplay` before entering the leaderboard, so times can't be faked.
 Every peer re-runs the deterministic sim locally from ~1 byte/tick of opponent input,

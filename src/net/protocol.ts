@@ -12,7 +12,7 @@
 
 import { DEFAULT_TRACK_ID, OVAL_1, SIM_VERSION, trackHash } from "../sim";
 
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 /** Max nickname length (enforced by the lobby input and again by the host). */
 export const MAX_NAME_LEN = 25;
@@ -20,10 +20,26 @@ export const MAX_NAME_LEN = 25;
 /** A player id is the PeerJS connection id of a client (or "host" for the owner). */
 export type PlayerId = string;
 
+/** Car models a player can drive. Purely visual: every model has the same collision circle. */
+export const CAR_MODELS = ["normal", "snowmobile", "bobsled"] as const;
+export type CarModel = (typeof CAR_MODELS)[number];
+export const DEFAULT_CAR: CarModel = "normal";
+
+export function isCarModel(v: unknown): v is CarModel {
+  return typeof v === "string" && (CAR_MODELS as readonly string[]).includes(v);
+}
+
+/** What a player looks like. Colors are exclusive inside a room; car models are not. */
+export interface Look {
+  color?: string; // one of PALETTE
+  car?: CarModel;
+}
+
 export interface PlayerInfo {
   id: PlayerId;
   name: string;
-  color: string; // one of PALETTE
+  color: string; // one of PALETTE, never shared by two players of the same room
+  car: CarModel;
   isHost: boolean;
 }
 
@@ -76,6 +92,16 @@ export interface HelloMsg {
   protocol: number;
   sim: number; // SIM_VERSION — must match the host's
   name: string;
+  /** Preferred look: the host grants the color if nobody else has it, otherwise picks a free one. */
+  color?: string;
+  car?: CarModel;
+}
+
+/** Client asks to change its car model and/or color (a taken color is ignored by the host). */
+export interface LookMsg {
+  t: "look";
+  color?: string;
+  car?: CarModel;
 }
 
 /** A batch of input ticks produced by this client since the last batch. */
@@ -125,7 +151,7 @@ export interface RejectMsg {
   detail?: string;
 }
 
-/** Roster changed (someone joined or left). */
+/** Roster changed (someone joined, left, or changed car / color). */
 export interface RosterMsg {
   t: "roster";
   players: PlayerInfo[];
@@ -167,7 +193,7 @@ export interface GameMsg {
   game: GameState;
 }
 
-export type ClientMsg = HelloMsg | InputMsg | FinishMsg | ResetMsg | PingMsg | ByeMsg;
+export type ClientMsg = HelloMsg | LookMsg | InputMsg | FinishMsg | ResetMsg | PingMsg | ByeMsg;
 export type HostMsg =
   | WelcomeMsg
   | RejectMsg
@@ -185,7 +211,7 @@ export const HEARTBEAT_MS = 2000;
 export const PEER_TIMEOUT_MS = 6000; // ~3 missed heartbeats
 
 /** 15 visually distinct car colors (max connections = 15). */
-// No light blues: they look like the personal ghost (light blue) at shadow alpha.
+// No light blues (the personal ghost used to be light blue; kept so the palette stays the same).
 export const PALETTE: string[] = [
   "#e5412d", // red (classic single-player color)
   "#45d483", // green

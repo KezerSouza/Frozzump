@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GameState, PlayerInfo } from "../src/net/protocol";
 import { RACE_MIN_RESTART_MS, RACE_NEXT_DELAY_MS, RoundHost, restartWaitMs } from "../src/net/round";
 
-const P = (id: string): PlayerInfo => ({ id, name: id.toUpperCase(), color: "#fff", isHost: id === "host" });
+const P = (id: string): PlayerInfo => ({ id, name: id.toUpperCase(), color: "#fff", car: "normal", isHost: id === "host" });
 
 function setup(ids = ["host", "a", "b"]) {
   const roster = [...ids];
