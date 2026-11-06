@@ -1,6 +1,7 @@
 import {
-  DT, OVAL_1, SIM_VERSION, SUBTICKS_PER_TICK, TICK_RATE, TOTAL_LAPS,
-  createState, decodeReplay, encodeReplay, fromBase64, step, toBase64, type CarState,
+  DEFAULT_TRACK_ID, DT, SIM_VERSION, SUBTICKS_PER_TICK, TICK_RATE, TOTAL_LAPS, TRACKS,
+  createState, decodeReplay, encodeReplay, fromBase64, getTrack, step, toBase64, trackHash,
+  type CarState, type TrackDef,
 } from "../sim";
 import { Room, type RemoteInputBatch } from "../net/room";
 import { restartWaitMs } from "../net/round";
@@ -12,8 +13,16 @@ import {
   draw, type LeaderRow, type Particle, type Pose, type RaceRow, type RaceView, type RankRow, type RemoteCar, type Scene,
 } from "./render";
 
-const track = OVAL_1;
-const BEST_KEY = `snowgo:best:${track.id}:v${SIM_VERSION}`; // the physics version is part of the key
+const SOLO_TRACK_KEY = "snowgo:track";
+// In solo everybody picks their own track (remembered); in a room the host's choice rules while we are in it.
+let soloTrack: TrackDef = getTrack(localStorage.getItem(SOLO_TRACK_KEY) ?? "") ?? getTrack(DEFAULT_TRACK_ID)!;
+let track: TrackDef = soloTrack;
+/**
+ * Best time + ghost are kept per track and per physics version. For a track drawn as text the
+ * hash of the drawing is part of the key too: edit the drawing and its records start fresh (an old
+ * ghost would drive through the new walls). The oval's key is unchanged, so its records survive.
+ */
+const bestKey = () => `snowgo:best:${track.id}${track.kind === "grid" ? `:${track.hash}` : ""}:v${SIM_VERSION}`;
 const GHOST_KEY = "snowgo:ghost-on";
 const OTHERS_KEY = "snowgo:others-on";
 
@@ -80,7 +89,7 @@ function lerpPose(a: Pose, b: Pose, t: number): Pose {
 }
 function loadBest(): Best | null {
   try {
-    const raw = localStorage.getItem(BEST_KEY);
+    const raw = localStorage.getItem(bestKey());
     return raw ? (JSON.parse(raw) as Best) : null;
   } catch {
     return null;
@@ -129,7 +138,7 @@ function onFinish() {
   const replay = toBase64(encodeReplay(inputs));
   if (!best || car.finishSubticks < best.time) {
     best = { time: car.finishSubticks, replay };
-    localStorage.setItem(BEST_KEY, JSON.stringify(best));
+    localStorage.setItem(bestKey(), JSON.stringify(best));
     newRecord = true;
   }
   // submit to the shared leaderboard (host verifies via verifyReplay); in race
@@ -222,14 +231,55 @@ function onGame(g: GameState) {
   const prevMode = game.mode;
   game = g;
   nextDeadline = g.nextInMs !== null ? performance.now() + g.nextInMs : null;
+  const trackChanged = g.track !== track.id;
+  if (trackChanged) {
+    const t = getTrack(g.track);
+    if (!t || trackHash(t) !== g.trackHash) {
+      // the host races on a track we don't have, or a different version of it
+      leaveRoom();
+      lobby.reopen();
+      lobby.showError("A pista da sala é diferente da sua versão do jogo. Atualize a página (Ctrl+F5) e tente de novo.");
+      return;
+    }
+    setTrack(t);
+  }
   if (g.mode === "free") {
-    if (prevMode === "race") reset(); // back to free play: everyone restarts on their own
+    // back to free play, or a new track: everyone restarts on their own
+    if (prevMode === "race" || trackChanged) reset();
     return;
   }
   if (g.round !== localRound) {
     localRound = g.round;
     const racing = !!self && g.participants.includes(self.id);
     reset(racing ? "countdown" : "waiting");
+  }
+}
+
+/** Switches the track we race on. Remote cars are rebuilt on it; they come back at their next reset. */
+function setTrack(t: TrackDef) {
+  track = t;
+  for (const r of remotes.values()) {
+    const st = createState(track);
+    r.state = st;
+    r.prev = pose(st);
+    r.queued = [];
+    r.synced = false;
+  }
+}
+
+/** The track picker: free in solo, host-only in a room. */
+function pickTrack(id: string) {
+  const t = getTrack(id);
+  if (!t) return;
+  if (room) {
+    if (room.isHost) room.setTrack(t.id); // → onGame from the host → every peer switches
+    return;
+  }
+  soloTrack = t;
+  try { localStorage.setItem(SOLO_TRACK_KEY, t.id); } catch { /* private mode */ }
+  if (t.id !== track.id) {
+    setTrack(t);
+    reset();
   }
 }
 
@@ -443,6 +493,8 @@ function frame(now: number) {
     isHost: !!room?.isHost,
     mode: game.mode,
     canRestart: race && restartWaitNow(now) === 0,
+    trackId: track.id,
+    canPickTrack: !room || room.isHost,
     restartInS: race && restartWaitNow(now) !== null ? Math.ceil(restartWaitNow(now)! / 1000) : null,
   });
 
@@ -464,7 +516,7 @@ function connect(mode: "host" | "join", code: string, name: string) {
   if (room) leaveRoom(); // never keep two rooms (e.g. retry while still connecting)
   const ref: { room: Room | null } = { room: null };
   const events = roomEvents(ref);
-  ref.room = mode === "host" ? Room.host(code, name, events) : Room.join(code, name, events);
+  ref.room = mode === "host" ? Room.host(code, name, events, track) : Room.join(code, name, events, track);
   room = ref.room;
 }
 
@@ -495,6 +547,7 @@ function roomEvents(ref: { room: Room | null }) {
         localRound = 0;
         nextDeadline = null;
         remotes.clear(); // drop every opponent car when the room ends
+        track = soloTrack; // back to the track we had picked in solo
         r.destroy(); // release the PeerJS peer (re-emits "closed", ignored: no longer live)
         reset(); // back to solo
         if (!leaving) lobby.reopen(); // show why we dropped (host left, room not found, …)
@@ -561,12 +614,16 @@ lobby = mountLobby(
   ({ mode, code, name }) => connect(mode, code, name),
   () => { leaveRoom(); lobby.close(); }, // "Voltar ao solo" (also cancels a pending connection)
 );
-const roomBar = mountRoomBar({
-  onMultiplayer: () => lobby.reopen(),
-  onLeave: leaveRoom,
-  onMode: setMode,
-  onRestart: () => room?.restartRound(),
-});
+const roomBar = mountRoomBar(
+  {
+    onMultiplayer: () => lobby.reopen(),
+    onLeave: leaveRoom,
+    onMode: setMode,
+    onRestart: () => room?.restartRound(),
+    onTrack: pickTrack,
+  },
+  TRACKS.map((t) => ({ id: t.id, name: t.name })),
+);
 keys.onOpenLobby = () => { if (!room) lobby.reopen(); };
 
 reset();

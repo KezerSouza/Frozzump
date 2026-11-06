@@ -12,7 +12,7 @@
 // ─────────────────────────────────────────────────────────────
 
 import { Peer, type DataConnection } from "peerjs";
-import { TOTAL_LAPS, fromBase64, decodeReplay, verifyReplay, OVAL_1 } from "../sim";
+import { TOTAL_LAPS, fromBase64, decodeReplay, getTrack, trackHash, verifyReplay, type TrackDef } from "../sim";
 import {
   HEARTBEAT_MS,
   FREE_GAME,
@@ -71,29 +71,33 @@ export class Room {
   // host-only state
   private conns = new Map<PlayerId, DataConnection>();
   private roster = new Map<PlayerId, PlayerInfo>();
-  private leaderboard: LeaderEntry[] = [];
+  private track: TrackDef; // the track the room races on (host-chosen)
+  private boards = new Map<string, LeaderEntry[]>(); // best times, one board per track
   private rounds: RoundHost | null = null;
 
   // client-only state
   private toHost: DataConnection | null = null;
 
-  private constructor(code: string, isHost: boolean, events: RoomEvents) {
+  private constructor(code: string, isHost: boolean, events: RoomEvents, track: TrackDef) {
     this.code = code;
     this.isHost = isHost;
     this.events = events;
+    this.track = track;
     this.peer = isHost
       ? new Peer(codeToPeerId(code))
       : new Peer(); // clients get a random id from the broker
   }
 
-  static host(code: string, name: string, events: RoomEvents): Room {
-    const room = new Room(code, true, events);
+  /** `track`: where the room starts (the host can change it later with setTrack). */
+  static host(code: string, name: string, events: RoomEvents, track: TrackDef): Room {
+    const room = new Room(code, true, events, track);
     room.startAsHost(name);
     return room;
   }
 
-  static join(code: string, name: string, events: RoomEvents): Room {
-    const room = new Room(code, false, events);
+  /** `track` is only a placeholder: the host's welcome message says which one the room really uses. */
+  static join(code: string, name: string, events: RoomEvents, track: TrackDef): Room {
+    const room = new Room(code, false, events, track);
     room.startAsClient(name);
     return room;
   }
@@ -118,6 +122,7 @@ export class Room {
           this.broadcast({ t: "game", game });
           this.events.onGame?.(game);
         },
+        { id: this.track.id, hash: trackHash(this.track) },
       );
       this.events.onStatus?.("open");
       this.events.onGame?.(this.rounds.snapshot());
@@ -240,7 +245,7 @@ export class Room {
     let time: number;
     try {
       const inputs = decodeReplay(fromBase64(replayB64));
-      const res = verifyReplay(OVAL_1, inputs);
+      const res = verifyReplay(this.track, inputs);
       if (!res.finished || res.lapSubticks.length < TOTAL_LAPS) return; // invalid run
       time = res.finishSubticks;
     } catch {
@@ -260,6 +265,23 @@ export class Room {
   /** Host: switch between free play and synchronized races. */
   setMode(mode: GameMode) {
     if (this.isHost) this.rounds?.setMode(mode);
+  }
+
+  /** Host: race on another track. Everybody restarts on it, and sees that track's own best times. */
+  setTrack(id: string) {
+    const track = getTrack(id);
+    if (!this.isHost || !track || track.id === this.track.id) return;
+    this.track = track;
+    this.rounds?.setTrack(track.id, trackHash(track)); // → "game" message with the new track
+    this.broadcast({ t: "leaderboard", leaderboard: this.leaderboard });
+    this.events.onLeaderboard?.(this.leaderboard);
+  }
+
+  /** Best times of the current track (a board per track, so switching back brings the old times back). */
+  private get leaderboard(): LeaderEntry[] {
+    let board = this.boards.get(this.track.id);
+    if (!board) this.boards.set(this.track.id, (board = []));
+    return board;
   }
 
   /** Host: start the next race round now (allowed once someone has finished). */

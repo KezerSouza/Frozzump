@@ -94,6 +94,38 @@ describe("RoundHost (race mode)", () => {
     expect(rh.restartInMs()).toBeNull(); // new round: nobody has finished again
   });
 
+  it("every snapshot says which track the room races on", () => {
+    const { rh, last } = setup();
+    rh.setMode("race");
+    expect(last().track).toBe("oval-1");
+    expect(last().trackHash).toBeTypeOf("number");
+  });
+
+  it("picking another track in race mode starts a new round on it, with no results", () => {
+    const { rh, last } = setup();
+    rh.setMode("race");
+    rh.finish(P("host"), 1, 5000);
+    expect(last().results).toHaveLength(1);
+    rh.setTrack("serpentina", 123);
+    expect(last().track).toBe("serpentina");
+    expect(last().trackHash).toBe(123);
+    expect(last().round).toBe(2);
+    expect(last().results).toEqual([]);
+    expect(last().participants).toEqual(["host", "a", "b"]);
+    expect(rh.restartInMs()).toBeNull(); // the old 20 s timer is gone
+    vi.advanceTimersByTime(RACE_NEXT_DELAY_MS * 2);
+    expect(last().round).toBe(2);
+  });
+
+  it("picking another track in free mode announces it without starting a round; the same track is a no-op", () => {
+    const { rh, states, last } = setup();
+    rh.setTrack("serpentina", 123);
+    expect(last()).toMatchObject({ mode: "free", round: 0, track: "serpentina", trackHash: 123 });
+    const n = states.length;
+    rh.setTrack("serpentina", 123);
+    expect(states.length).toBe(n);
+  });
+
   it("restartWaitMs derives the same wait from the timer a client receives", () => {
     expect(restartWaitMs(RACE_NEXT_DELAY_MS)).toBe(RACE_MIN_RESTART_MS);
     expect(restartWaitMs(RACE_NEXT_DELAY_MS - 2000)).toBe(RACE_MIN_RESTART_MS - 2000);

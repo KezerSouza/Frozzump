@@ -40,12 +40,66 @@ npm test         # simulation, replay, determinism
 npm run bot      # bot that drives 5 laps and prints the times (for tuning)
 ```
 
+## Tracks
+
+The track picker (top bar) chooses where you race. In **solo** everybody picks their own track
+(it is remembered) and the **best time and ghost are kept per track**. In a **room** only the host
+picks: everybody switches to it (in race mode that starts a new round), and the shared leaderboard
+is also per track. A client whose build has a different drawing of the host's track is refused
+(it asks to refresh the page).
+
+There are two kinds of track. The **oval** is analytic (two straights + two semicircles). Every other
+track is **drawn as text**, so making a new one is just editing a file.
+
+### Drawing a track
+
+Create `src/sim/tracks/my-track.ts` (copy `serpentina.ts`), register it in `src/sim/registry.ts`
+(`parseTrack("my-track", MY_TRACK)`) and reload. A track is a short header, a blank line and the drawing:
+
+```
+name: My track        ← shown in the picker
+cell: 1               ← size of one character in meters (default 1; 0.5 = smoother walls, 4x the characters)
+finish: right         ← direction of travel across the finish line (right | left | up | down)
+start: right          ← direction the car faces at the start (optional, default = finish)
+
+##########
+#S..F....#
+##########
+```
+
+| char | meaning |
+|---|---|
+| `#` | wall (a space, or anything outside the drawing, is wall too) |
+| `.` | road |
+| `~` | deep snow (slows the car) |
+| `^` | boost ramp (jumps over snow; the arrows follow the race direction) |
+| `S` | start, exactly one, with free space around it (the car is 1.44 m wide) |
+| `F` | finish line: a straight run of `F` from wall to wall |
+| `1`…`9` | checkpoints: a straight run each, wall to wall, numbered in driving order (at least 2) |
+
+Laps only count after crossing the checkpoints in order, then the finish. The loader checks all of
+this and says where and why when something is wrong (`TrackError`): start glued to a wall, a line
+that doesn't reach the walls, checkpoints out of order, a track that isn't a closed circuit,
+unreachable pieces of road.
+
+The walls are the outline of the drawing (diagonals are smooth; round corners show steps as big as
+a cell, so use a smaller `cell` for rounder ones). A big track needs nothing else: the camera zooms
+out to fit it. Editing a drawing starts fresh records for it (the hash of the drawing is part of the
+key of the saved best time).
+
+Rule of thumb for jumps: a ramp lets the car clear about 11 m, so keep the snow shorter than that
+after the ramp. Put the ramp on a lane edge and the snow across the whole road if you want a choice
+between the shortcut through the snow and the jump.
+
 ## Layout
 
 ```
 src/sim/      deterministic core (NO DOM, NO Math.sin/cos/exp/pow, NO Math.random/Date)
   params.ts   physics constants + SIM_VERSION
-  track.ts    track as data (JSON-friendly): geometry, snow, ramp, gates
+  track.ts    track types (oval = StadiumTrack, drawn tracks = GridTrack) + the oval itself
+  grid.ts     parseTrack(): turns a drawing in text into a track (walls, gates, snow, ramps) and validates it
+  registry.ts the list of tracks the game knows (+ fingerprint of each)
+  tracks/     the drawings (one file per track)
   sim.ts      createState / step / hashState
   replay.ts   inputs <-> bytes (RLE + base64) and verifyReplay (what the host runs)
 src/net/      P2P multiplayer (WebRTC via PeerJS)
@@ -54,7 +108,7 @@ src/net/      P2P multiplayer (WebRTC via PeerJS)
   round.ts    race-mode rounds (host): participants, standings, 20 s next-round timer
 src/client/   browser: fixed-step loop, keyboard, Canvas 2D, ghost, lobby UI
 tests/        vitest (includes a "golden" determinism hash)
-tools/bot.ts  tuning bot
+tools/bot.ts  tuning bot (oval only)
 ```
 
 ## Rules for `src/sim`
@@ -64,6 +118,8 @@ tools/bot.ts  tuning bot
 3. The simulation steps in whole ticks (120 Hz); race and lap times are integers in subticks (1/65536 tick).
    Never trust time measured by the client: the server re-runs the replay.
 4. Changed anything in `params.ts`/`sim.ts`/`track.ts`? Bump `SIM_VERSION` and update the test's GOLDEN.
+   (Editing a drawing in `tracks/` needs no bump: its records restart on their own, because the hash
+   of the drawing is part of the key. Rooms refuse peers whose drawing differs from the host's.)
 
 ## Contributors
 
