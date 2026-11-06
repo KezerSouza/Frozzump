@@ -153,6 +153,9 @@ export interface RoomBarState {
   isHost: boolean;
   mode: GameMode;
   canRestart: boolean;
+  trackId: string;
+  /** solo: always; in a room: only the host */
+  canPickTrack: boolean;
   /** seconds until restarting is allowed, once someone finished (null: nobody has finished yet) */
   restartInS: number | null;
 }
@@ -162,32 +165,43 @@ export interface RoomBarActions {
   onLeave: () => void;
   onMode: (mode: GameMode) => void;
   onRestart: () => void;
+  onTrack: (id: string) => void;
 }
 
-export function mountRoomBar(actions: RoomBarActions): { update: (s: RoomBarState) => void } {
+export function mountRoomBar(
+  actions: RoomBarActions,
+  /** `error`: the drawing is invalid, so it is listed (disabled) with the reason instead of crashing the game */
+  tracks: { id: string; name: string; error?: string }[],
+): { update: (s: RoomBarState) => void } {
   const root = document.createElement("div");
   root.id = "roombar";
   root.innerHTML = `
     <style>
       #roombar {
-        position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 5;
-        display: flex; gap: 6px; align-items: center;
-        font-family: "Avenir Next","Segoe UI",system-ui,sans-serif; font-size: 13px; color: #e8f1f7;
+        position: fixed; top: 15px; left: 50%; transform: translateX(-50%); z-index: 5;
+        display: flex; gap: 7.5px; align-items: center;
+        font-family: "Avenir Next","Segoe UI",system-ui,sans-serif; font-size: 16.25px; color: #e8f1f7;
       }
       #roombar .code {
-        padding: 6px 10px; border-radius: 8px; background: rgba(17,34,58,0.85);
-        font-family: ui-monospace, monospace; letter-spacing: 2px;
+        padding: 7.5px 12.5px; border-radius: 10px; background: rgba(17,34,58,0.85);
+        font-family: ui-monospace, monospace; letter-spacing: 2.5px;
       }
       #roombar button {
-        border: 1px solid #2b4866; border-radius: 8px; padding: 6px 12px; font-size: 13px; font-weight: 600;
+        border: 1px solid #2b4866; border-radius: 10px; padding: 7.5px 15px; font-size: 16.25px; font-weight: 600;
         cursor: pointer; background: rgba(17,34,58,0.85); color: #e8f1f7;
       }
       #roombar button.on { background: #3da5ff; color: #07121f; border-color: #3da5ff; }
       #roombar button:disabled { opacity: 0.45; cursor: default; }
+      #roombar select {
+        border: 1px solid #2b4866; border-radius: 10px; padding: 7.5px 10px; font-size: 16.25px; font-weight: 600;
+        background: rgba(17,34,58,0.85); color: #e8f1f7; max-width: 212px;
+      }
+      #roombar select:disabled { opacity: 0.7; }
       #roombar .seg { display: flex; }
-      #roombar .seg button:first-child { border-radius: 8px 0 0 8px; }
-      #roombar .seg button:last-child { border-radius: 0 8px 8px 0; border-left: 0; }
+      #roombar .seg button:first-child { border-radius: 10px 0 0 10px; }
+      #roombar .seg button:last-child { border-radius: 0 10px 10px 0; border-left: 0; }
     </style>
+    <select id="rb-track" title="Pista"></select>
     <button id="rb-mp">Multiplayer</button>
     <span class="code" id="rb-code"></span>
     <span class="seg" id="rb-modes">
@@ -203,6 +217,19 @@ export function mountRoomBar(actions: RoomBarActions): { update: (s: RoomBarStat
   const mp = $("rb-mp"), code = $("rb-code"), modes = $("rb-modes");
   const free = $("rb-free"), race = $("rb-race");
   const restart = $("rb-restart") as HTMLButtonElement, leave = $("rb-leave");
+  const trackSel = $("rb-track") as HTMLSelectElement;
+  for (const t of tracks) {
+    const opt = new Option(t.error ? `${t.name} ⚠ inválida` : t.name, t.id);
+    if (t.error) {
+      opt.disabled = true;
+      opt.title = t.error;
+    }
+    trackSel.add(opt);
+  }
+  trackSel.addEventListener("change", () => {
+    trackSel.blur(); // hand the keyboard back to the game (a focused <select> would eat the arrow keys)
+    actions.onTrack(trackSel.value);
+  });
 
   // blur after each click so Space/Enter while racing don't re-trigger the button
   const on = (el: HTMLElement, fn: () => void) =>
@@ -224,6 +251,9 @@ export function mountRoomBar(actions: RoomBarActions): { update: (s: RoomBarStat
       const key = JSON.stringify(s);
       if (key === lastKey) return; // called every frame: only touch the DOM on change
       lastKey = key;
+      trackSel.value = s.trackId;
+      trackSel.disabled = !s.canPickTrack;
+      trackSel.title = s.canPickTrack ? "Pista" : "Só o host escolhe a pista";
       show(mp, !s.inRoom);
       show(code, s.inRoom);
       show(leave, s.inRoom);

@@ -1,4 +1,7 @@
-import { TOTAL_LAPS, type CarState, type TrackDef } from "../sim";
+import type { CarState, TrackDef } from "../sim";
+
+/** The bigger HUD pieces (Best, Lap, controls guide, players, best times) are drawn at this multiple of their old size. */
+const UI_SCALE = 1.25;
 
 export interface Pose { x: number; y: number; hx: number; hy: number }
 export interface Particle { x: number; y: number; vx: number; vy: number; life: number; max: number; size: number }
@@ -16,7 +19,7 @@ export interface RemoteCar {
 export interface RankRow {
   name: string;
   color: string;
-  lap: number; // 1..TOTAL_LAPS
+  lap: number; // 1..laps of the track
   isSelf: boolean;
   finished: boolean;
   waiting: boolean; // race mode: not in the current round (joined late)
@@ -43,6 +46,7 @@ export interface RaceRow {
 /** Race-mode overlay (null in free mode). */
 export interface RaceView {
   round: number;
+  laps: number; // laps of this track
   rows: RaceRow[];
   nextText: string; // "Próxima corrida em 14s" / "Aguardando o 1º colocado…"
   hostHint: string | null; // host only, once the round can be restarted
@@ -104,26 +108,66 @@ function stadium(ctx: CanvasRenderingContext2D, L: number, r: number) {
   ctx.roundRect(-(L + r), -r, 2 * (L + r), 2 * r, r);
 }
 
+/** Adds the outline of the road (outer wall + infield, or every loop of a grid track) to the current path. */
+function roadOutline(ctx: CanvasRenderingContext2D, t: TrackDef) {
+  if (t.kind === "stadium") {
+    const L = t.halfStraight, Ro = t.centerRadius + t.halfWidth, Ri = t.centerRadius - t.halfWidth;
+    stadium(ctx, L, Ro);
+    stadium(ctx, L, Ri);
+    return;
+  }
+  loopsPath(ctx, t.loops);
+}
+
+function loopsPath(ctx: CanvasRenderingContext2D, loops: number[][]) {
+  for (const lp of loops) {
+    ctx.moveTo(lp[0], lp[1]);
+    for (let n = 2; n < lp.length; n += 2) ctx.lineTo(lp[n], lp[n + 1]);
+    ctx.closePath();
+  }
+}
+
+/** Loops with the opposite orientation to the road's own are the walls' islands ("infield"). */
+function isIsland(lp: number[]): boolean {
+  let a = 0;
+  for (let n = 0; n < lp.length; n += 2) {
+    const m = (n + 2) % lp.length;
+    a += lp[n] * lp[m + 1] - lp[m] * lp[n + 1];
+  }
+  return a > 0; // (y grows downwards: a loop with the road inside has negative area)
+}
+
 export function draw(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: number, sc: Scene) {
   const t = sc.track;
-  const L = t.halfStraight, Ro = t.centerRadius + t.halfWidth, Ri = t.centerRadius - t.halfWidth;
 
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = C.bg;
   ctx.fillRect(0, 0, w, h);
 
-  // fixed camera showing the whole track (as in the original minigame)
-  const scale = Math.min(w / (2 * (L + Ro) + 4), h / (2 * Ro + 7));
-  const ox = w / 2, oy = h / 2 + 18; // screen position (CSS px) of the world origin
+  // fixed camera that fits the WHOLE track on screen (a big track simply zooms out)
+  const b = t.bounds;
+  const scale = Math.min(w / (b.x1 - b.x0 + 4), h / (b.y1 - b.y0 + 7));
+  const ox = w / 2 - ((b.x0 + b.x1) / 2) * scale; // screen position (CSS px) of the world origin
+  const oy = h / 2 + 18 - ((b.y0 + b.y1) / 2) * scale;
   ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * ox, dpr * oy);
 
   // track + infield
-  ctx.beginPath(); stadium(ctx, L, Ro); ctx.fillStyle = C.track; ctx.fill();
-  ctx.beginPath(); stadium(ctx, L, Ri); ctx.fillStyle = C.infield; ctx.fill();
+  if (t.kind === "stadium") {
+    const L = t.halfStraight, Ro = t.centerRadius + t.halfWidth, Ri = t.centerRadius - t.halfWidth;
+    ctx.beginPath(); stadium(ctx, L, Ro); ctx.fillStyle = C.track; ctx.fill();
+    ctx.beginPath(); stadium(ctx, L, Ri); ctx.fillStyle = C.infield; ctx.fill();
+  } else {
+    ctx.beginPath(); roadOutline(ctx, t); ctx.fillStyle = C.track; ctx.fill("evenodd");
+    ctx.fillStyle = C.infield;
+    for (const lp of t.loops) {
+      if (!isIsland(lp)) continue;
+      ctx.beginPath(); loopsPath(ctx, [lp]); ctx.fill();
+    }
+  }
 
   // deep snow and ramp (clipped to the track)
   ctx.save();
-  ctx.beginPath(); stadium(ctx, L, Ro); stadium(ctx, L, Ri); ctx.clip("evenodd");
+  ctx.beginPath(); roadOutline(ctx, t); ctx.clip("evenodd");
   for (const r of t.snow) {
     ctx.fillStyle = C.snow;
     ctx.fillRect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
@@ -138,25 +182,35 @@ export function draw(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: n
     ctx.fillStyle = C.ramp;
     ctx.fillRect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
     ctx.strokeStyle = C.rampDark; ctx.lineWidth = 0.12; ctx.lineJoin = "round";
-    const cy = (r.y0 + r.y1) / 2;
-    for (let i = 0; i < 2; i++) { // chevrons pointing in the race direction (←)
-      const cx = r.x1 - 0.3 - i * 0.35;
-      ctx.beginPath(); ctx.moveTo(cx + 0.18, cy - 0.45); ctx.lineTo(cx - 0.12, cy); ctx.lineTo(cx + 0.18, cy + 0.45); ctx.stroke();
+    ctx.save(); // two chevrons pointing in the race direction, drawn in a frame where +x is "forward"
+    ctx.translate((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2);
+    ctx.rotate(Math.atan2(r.dy, r.dx));
+    for (const u of [-0.2, 0.15]) {
+      ctx.beginPath(); ctx.moveTo(u - 0.18, -0.45); ctx.lineTo(u + 0.12, 0); ctx.lineTo(u - 0.18, 0.45); ctx.stroke();
     }
+    ctx.restore();
   }
   // start/finish line (checkered)
   const g = t.gates[0];
-  const sq = 0.5, n = Math.round((g.by - g.ay) / sq);
+  const sq = 0.5;
+  const vertical = g.ax === g.bx; // the line runs top-bottom (cars cross it left-right) or the other way round
+  const n = Math.round((vertical ? g.by - g.ay : g.bx - g.ax) / sq);
   for (let i = 0; i < n; i++) for (let j = 0; j < 2; j++) {
     ctx.fillStyle = (i + j) % 2 ? "#0c1624" : "#ffffff";
-    ctx.fillRect(g.ax - sq + j * sq, g.ay + i * sq, sq, sq);
+    if (vertical) ctx.fillRect(g.ax - sq + j * sq, g.ay + i * sq, sq, sq);
+    else ctx.fillRect(g.ax + i * sq, g.ay - sq + j * sq, sq, sq);
   }
   ctx.restore();
 
   // walls
-  ctx.strokeStyle = C.wall; ctx.lineWidth = 0.3;
-  ctx.beginPath(); stadium(ctx, L, Ro); ctx.stroke();
-  ctx.beginPath(); stadium(ctx, L, Ri); ctx.stroke();
+  ctx.strokeStyle = C.wall; ctx.lineWidth = 0.3; ctx.lineJoin = "round";
+  if (t.kind === "stadium") {
+    const L = t.halfStraight, Ro = t.centerRadius + t.halfWidth, Ri = t.centerRadius - t.halfWidth;
+    ctx.beginPath(); stadium(ctx, L, Ro); ctx.stroke();
+    ctx.beginPath(); stadium(ctx, L, Ri); ctx.stroke();
+  } else {
+    ctx.beginPath(); roadOutline(ctx, t); ctx.stroke();
+  }
 
   // snow particles
   for (const p of sc.particles) {
@@ -254,21 +308,25 @@ function drawHud(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: numbe
   ctx.textBaseline = "top"; ctx.textAlign = "left";
   ctx.fillStyle = C.text; ctx.font = `600 ${Math.round(Math.min(44, w * 0.04))}px ${MONO}`;
   ctx.fillText(sc.timeText, pad, pad);
-  ctx.fillStyle = C.muted; ctx.font = `500 ${Math.round(Math.min(16, w * 0.016))}px ${SANS}`;
-  const lap = Math.min(sc.state.laps + 1, TOTAL_LAPS);
-  ctx.fillText(`Lap ${lap} of ${TOTAL_LAPS}`, pad, pad + Math.min(52, w * 0.05));
+  const baseFs = Math.min(16, w * 0.016);
+  ctx.fillStyle = C.muted; ctx.font = `500 ${Math.round(baseFs * UI_SCALE)}px ${SANS}`;
+  const lap = Math.min(sc.state.laps + 1, sc.track.laps);
+  ctx.fillText(`Lap ${lap} of ${sc.track.laps}`, pad, pad + Math.min(52, w * 0.05));
 
   ctx.textAlign = "right";
   ctx.fillText(`Best ${sc.bestText}`, w - pad, pad + 6);
-  sc.splits.forEach((s, i) => ctx.fillText(`${i + 1}  ${s}`, w - pad, pad + 32 + i * 20));
+  // the personal splits keep their size; they start below the (bigger) Best line
+  const splitsTop = pad + 6 + Math.round(baseFs * UI_SCALE * 1.25) + 6;
+  ctx.font = `500 ${Math.round(baseFs)}px ${SANS}`;
+  sc.splits.forEach((s, i) => ctx.fillText(`${i + 1}  ${s}`, w - pad, splitsTop + i * 20));
 
   // shared lap-time leaderboard (top-right, below personal splits)
-  drawLeaderboard(ctx, w, pad, sc);
+  drawLeaderboard(ctx, w, splitsTop + sc.splits.length * 20, sc);
   // connected-players rank (left side)
-  drawRank(ctx, pad, sc);
+  drawRank(ctx, pad, sc, pad + Math.min(52, w * 0.05) + Math.round(baseFs * UI_SCALE * 1.25));
 
   ctx.textAlign = "center"; ctx.textBaseline = "bottom"; ctx.fillStyle = C.muted;
-  ctx.font = `500 ${Math.round(Math.min(15, w * 0.015))}px ${SANS}`;
+  ctx.font = `500 ${Math.round(Math.min(15, w * 0.015) * UI_SCALE)}px ${SANS}`;
   const room = sc.roomCode ? `   room ${sc.roomCode}${sc.modeText ? ` · ${sc.modeText}` : ""}` : "   M multiplayer";
   const restart = sc.restartKey ? "   R restart" : "";
   ctx.fillText(`← → steer${restart}   G ghost ${sc.ghostOn ? "on" : "off"}   O others ${sc.othersOn ? "on" : "off"}${room}`, w / 2, h - pad * 0.8);
@@ -316,7 +374,7 @@ function drawRacePanel(ctx: CanvasRenderingContext2D, w: number, h: number, r: R
   ctx.font = `700 20px ${SANS}`;
   ctx.fillText(r.waiting ? "Aguardando a próxima corrida…" : `Corrida ${r.round} — Resultado`, w / 2, by + 16, bw - 24);
   ctx.fillStyle = C.muted; ctx.font = `500 13px ${SANS}`;
-  ctx.fillText(r.waiting ? `Corrida ${r.round} em andamento` : `${TOTAL_LAPS} voltas`, w / 2, by + 42);
+  ctx.fillText(r.waiting ? `Corrida ${r.round} em andamento` : `${r.laps} voltas`, w / 2, by + 42);
 
   const top = by + 64, left = bx + 20, right = bx + bw - 20, sw = 11;
   ctx.textBaseline = "middle";
@@ -355,45 +413,45 @@ function drawRacePanel(ctx: CanvasRenderingContext2D, w: number, h: number, r: R
 }
 
 /** Connected-players rank (1..15) on the left side. */
-function drawRank(ctx: CanvasRenderingContext2D, pad: number, sc: Scene) {
+function drawRank(ctx: CanvasRenderingContext2D, pad: number, sc: Scene, lapBottom: number) {
   if (sc.rank.length === 0) return;
   const x = pad;
-  const top = pad + 86;
-  const rowH = 22;
-  const sw = 11; // color swatch size
+  const top = Math.max(pad + 86, lapBottom + 20 * UI_SCALE + 4); // below the (bigger) "Lap x of y" line
+  const rowH = 22 * UI_SCALE;
+  const sw = 11 * UI_SCALE; // color swatch size
 
   ctx.textAlign = "left"; ctx.textBaseline = "middle";
-  ctx.font = `600 12px ${SANS}`; ctx.fillStyle = C.muted;
-  ctx.fillText(`PLAYERS ${sc.rank.length}/15`, x, top - 14);
+  ctx.font = `600 ${12 * UI_SCALE}px ${SANS}`; ctx.fillStyle = C.muted;
+  ctx.fillText(`PLAYERS ${sc.rank.length}/15`, x, top - 14 * UI_SCALE);
 
-  ctx.font = `500 13px ${SANS}`;
+  ctx.font = `500 ${13 * UI_SCALE}px ${SANS}`;
   sc.rank.forEach((row, i) => {
     const y = top + i * rowH + rowH / 2;
     ctx.fillStyle = C.muted; ctx.textAlign = "right";
-    ctx.fillText(`${i + 1}`, x + 14, y);
+    ctx.fillText(`${i + 1}`, x + 14 * UI_SCALE, y);
     ctx.fillStyle = row.color;
-    ctx.fillRect(x + 20, y - sw / 2, sw, sw);
+    ctx.fillRect(x + 20 * UI_SCALE, y - sw / 2, sw, sw);
     ctx.textAlign = "left";
     ctx.fillStyle = row.isSelf ? C.text : C.muted;
     const lapTxt = row.waiting ? "—" : row.finished ? "fin" : `L${row.lap}`;
     const name = row.name.length > 10 ? row.name.slice(0, 10) + "…" : row.name;
-    ctx.fillText(`${name}  ${lapTxt}`, x + 20 + sw + 8, y);
+    ctx.fillText(`${name}  ${lapTxt}`, x + 20 * UI_SCALE + sw + 8 * UI_SCALE, y);
   });
 }
 
 /** Shared lap-time leaderboard (best times), top-right under the splits. */
-function drawLeaderboard(ctx: CanvasRenderingContext2D, w: number, pad: number, sc: Scene) {
+function drawLeaderboard(ctx: CanvasRenderingContext2D, w: number, splitsBottom: number, sc: Scene) {
   if (sc.leaderboard.length === 0) return;
-  const x = w - pad;
-  const top = pad + 32 + Math.max(sc.splits.length, 0) * 20 + 26;
-  const rowH = 20;
-  const sw = 10;
+  const x = w - Math.max(16, w * 0.02);
+  const top = splitsBottom + 26 + 8 * UI_SCALE;
+  const rowH = 20 * UI_SCALE;
+  const sw = 10 * UI_SCALE;
 
   ctx.textAlign = "right"; ctx.textBaseline = "middle";
-  ctx.font = `600 12px ${SANS}`; ctx.fillStyle = C.muted;
-  ctx.fillText("BEST TIMES", x, top - 14);
+  ctx.font = `600 ${12 * UI_SCALE}px ${SANS}`; ctx.fillStyle = C.muted;
+  ctx.fillText("BEST TIMES", x, top - 14 * UI_SCALE);
 
-  ctx.font = `500 13px ${MONO}`;
+  ctx.font = `500 ${13 * UI_SCALE}px ${MONO}`;
   sc.leaderboard.slice(0, 8).forEach((row, i) => {
     const y = top + i * rowH + rowH / 2;
     ctx.textAlign = "right";
@@ -401,10 +459,10 @@ function drawLeaderboard(ctx: CanvasRenderingContext2D, w: number, pad: number, 
     ctx.fillText(row.timeText, x, y);
     const name = row.name.length > 8 ? row.name.slice(0, 8) + "…" : row.name;
     const tw = ctx.measureText(row.timeText).width;
-    ctx.fillText(name, x - tw - 10, y);
+    ctx.fillText(name, x - tw - 10 * UI_SCALE, y);
     // color swatch to the left of the name
     const nw = ctx.measureText(name).width;
     ctx.fillStyle = row.color;
-    ctx.fillRect(x - tw - 10 - nw - 8 - sw, y - sw / 2, sw, sw);
+    ctx.fillRect(x - tw - 10 * UI_SCALE - nw - 8 * UI_SCALE - sw, y - sw / 2, sw, sw);
   });
 }

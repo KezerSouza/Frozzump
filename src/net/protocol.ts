@@ -10,9 +10,9 @@
 // every other car. Traffic is tiny.
 // ─────────────────────────────────────────────────────────────
 
-import { SIM_VERSION } from "../sim";
+import { DEFAULT_TRACK_ID, OVAL_1, SIM_VERSION, trackHash } from "../sim";
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 /** Max nickname length (enforced by the lobby input and again by the host). */
 export const MAX_NAME_LEN = 25;
@@ -59,9 +59,14 @@ export interface GameState {
   participants: PlayerId[]; // who started this round (late joiners wait for the next one)
   results: RoundResult[]; // finishers, sorted by race time
   nextInMs: number | null; // ms until the next round; null while nobody has finished
+  track: string; //           id of the track everybody races on (chosen by the host)
+  trackHash: number; //       fingerprint of that track: a client with a different drawing refuses to join
 }
 
-export const FREE_GAME: GameState = { mode: "free", round: 0, participants: [], results: [], nextInMs: null };
+export const FREE_GAME: GameState = {
+  mode: "free", round: 0, participants: [], results: [], nextInMs: null,
+  track: DEFAULT_TRACK_ID, trackHash: trackHash(OVAL_1),
+};
 
 // ── Client → Host ──────────────────────────────────────────────
 

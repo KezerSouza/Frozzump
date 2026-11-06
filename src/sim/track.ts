@@ -19,30 +19,80 @@ export interface Gate {
   dy: number;
 }
 
-export interface TrackDef {
+/** Axis-aligned box, in world meters (y grows downwards, like the screen). */
+export interface Bounds {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+/** A boost ramp: a zone plus the direction of travel over it (only used to draw the arrows). */
+export interface Ramp extends Rect {
+  dx: number;
+  dy: number;
+}
+
+/** What every track has, whatever its shape. */
+export interface TrackBase {
   id: string;
+  name: string;
+  laps: number; //          laps of a race on this track
+  snow: Rect[]; //          deep snow
+  ramps: Ramp[]; //         boost ramps
+  gates: Gate[]; //         gates[0] = start/finish line; the rest in race order
+  start: { x: number; y: number; hx: number; hy: number };
+  bounds: Bounds; //        box that contains the whole track (the camera fits it on screen)
+}
+
+/** The original oval: two straights joined by two semicircles (analytic walls). */
+export interface StadiumTrack extends TrackBase {
+  kind: "stadium";
   halfStraight: number; // half the length of the straight (L/2)
   centerRadius: number; //  R: radius of the center line in the turns
   halfWidth: number; //     W: half the track width
-  snow: Rect[]; //          deep snow
-  ramps: Rect[]; //         boost ramps
-  gates: Gate[]; //         gates[0] = start/finish line; the rest in race order
-  start: { x: number; y: number; hx: number; hy: number };
 }
+
+/**
+ * A track drawn as text (see grid.ts). The walls are the outline of the drawing, as straight
+ * segments; `loops` is that same outline as closed polygons (for drawing); `buckets` is a
+ * spatial index (one list of segment indices per grid cell) so a car only tests nearby walls.
+ * Everything is plain numbers/arrays, so it stays JSON-friendly.
+ */
+export interface GridTrack extends TrackBase {
+  kind: "grid";
+  cell: number; //          cell size in meters
+  cols: number;
+  rows: number;
+  /** Wall segments, flattened [x0, y0, x1, y1, …]. Oriented so that the road is on the (dy, -dx) side. */
+  segs: number[];
+  /** Per cell (row * cols + col): indices of the segments within a car radius of that cell. */
+  buckets: number[][];
+  /** The outline as closed polygons, each flattened [x0, y0, x1, y1, …] (for drawing). */
+  loops: number[][];
+  /** FNV-1a hash of the source text: peers compare it to be sure they all run the same track. */
+  hash: number;
+}
+
+export type TrackDef = StadiumTrack | GridTrack;
 
 const R = 5.5;
 const W = 3.5;
 const L = 6;
 
-export const OVAL_1: TrackDef = {
+export const OVAL_1: StadiumTrack = {
+  kind: "stadium",
   id: "oval-1",
+  name: "Oval",
+  laps: 5,
   halfStraight: L,
   centerRadius: R,
   halfWidth: W,
+  bounds: { x0: -(L + R + W), y0: -(R + W), x1: L + R + W, y1: R + W },
   // top straight (negative y = "up" on screen), halfway through the lap
   snow: [{ x0: -5, y0: -(R + W) - 1, x1: 5, y1: -(R - W) + 1 }],
   // narrow strip (2 m) on the inside, right before the snow
-  ramps: [{ x0: 4.8, y0: -5, x1: 5.8, y1: -3 }],
+  ramps: [{ x0: 4.8, y0: -5, x1: 5.8, y1: -3, dx: -1, dy: 0 }],
   gates: [
     { ax: 0, ay: R - W, bx: 0, by: R + W, dx: 1, dy: 0 }, //                 0: start (bottom straight)
     { ax: L + R - W, ay: 0, bx: L + R + W, by: 0, dx: 0, dy: -1 }, //       1: right turn

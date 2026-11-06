@@ -1,9 +1,9 @@
 import {
   AIR_TICKS, BOOST_SPEED, CAR_RADIUS, DRAG_SNOW, DRAG_TRACK, DT, IN_LEFT, IN_RIGHT,
   LAT_KEEP_AIR, LAT_KEEP_SNOW, LAT_KEEP_TRACK, MAX_YAW, STEER_AIR_SCALE, STEER_RATE,
-  SUBTICKS_PER_TICK, THRUST, TOTAL_LAPS, V_REF, WALL_BOUNCE, WALL_IMPACT, WALL_KEEP, WALL_MIN_KEEP, WALL_PIVOT,
+  SUBTICKS_PER_TICK, THRUST, V_REF, WALL_BOUNCE, WALL_IMPACT, WALL_KEEP, WALL_MIN_KEEP, WALL_PIVOT,
 } from "./params";
-import { gateCrossing, inRects, type TrackDef } from "./track";
+import { gateCrossing, inRects, type GridTrack, type StadiumTrack, type TrackDef } from "./track";
 
 export interface CarState {
   x: number;
@@ -116,7 +116,7 @@ export function step(s: CarState, track: TrackDef, input: number): void {
         const sub = (s.tick - 1) * SUBTICKS_PER_TICK + Math.floor(t * SUBTICKS_PER_TICK);
         s.laps++;
         s.lapSubticks.push(sub);
-        if (s.laps >= TOTAL_LAPS) {
+        if (s.laps >= track.laps) {
           s.finished = true;
           s.finishSubticks = sub;
         }
@@ -128,6 +128,80 @@ export function step(s: CarState, track: TrackDef, input: number): void {
 }
 
 function resolveWalls(s: CarState, track: TrackDef): void {
+  if (track.kind === "grid") resolveGridWalls(s, track);
+  else resolveStadiumWalls(s, track);
+}
+
+/**
+ * Walls of a track drawn on a grid: the car is a circle, the walls are straight segments (the
+ * outline of the drawing, oriented so that the road is on their (dy, -dx) side). Each pass pushes
+ * the car out of the DEEPEST wall it penetrates (so a straight wall made of several segments
+ * never pushes along a corner's tilted normal), then applies the same bounce/scrape rules as the
+ * oval. Only + - * / and sqrt, so it stays deterministic.
+ */
+function resolveGridWalls(s: CarState, track: GridTrack): void {
+  const cs = track.cell;
+  let bc = Math.floor(s.x / cs);
+  let br = Math.floor(s.y / cs);
+  bc = bc < 0 ? 0 : bc >= track.cols ? track.cols - 1 : bc;
+  br = br < 0 ? 0 : br >= track.rows ? track.rows - 1 : br;
+  const near = track.buckets[br * track.cols + bc];
+  const segs = track.segs;
+  let touched = false;
+
+  for (let pass = 0; pass < 4; pass++) {
+    let bestDepth = 0;
+    let bnx = 0;
+    let bny = 0;
+    for (let i = 0; i < near.length; i++) {
+      const o = near[i] * 4;
+      const x0 = segs[o], y0 = segs[o + 1];
+      const ex = segs[o + 2] - x0, ey = segs[o + 3] - y0;
+      const len2 = ex * ex + ey * ey;
+      const rawT = ((s.x - x0) * ex + (s.y - y0) * ey) / len2;
+      const t = rawT < 0 ? 0 : rawT > 1 ? 1 : rawT;
+      const dx = s.x - (x0 + t * ex);
+      const dy = s.y - (y0 + t * ey);
+      const d2 = dx * dx + dy * dy;
+      if (d2 >= CAR_RADIUS * CAR_RADIUS) continue;
+      const len = Math.sqrt(len2);
+      const rx = ey / len; // unit normal pointing to the road
+      const ry = -ex / len;
+      const side = (s.x - x0) * rx + (s.y - y0) * ry; // < 0: the center is already inside the wall
+      let depth: number, nx: number, ny: number;
+      if (rawT > 0 && rawT < 1 && side < 0) {
+        depth = CAR_RADIUS - side;
+        nx = rx;
+        ny = ry;
+      } else {
+        const d = Math.sqrt(d2);
+        depth = CAR_RADIUS - d;
+        if (d > 1e-9) { nx = dx / d; ny = dy / d; } else { nx = rx; ny = ry; }
+      }
+      if (depth > bestDepth) {
+        bestDepth = depth;
+        bnx = nx;
+        bny = ny;
+      }
+    }
+    if (bestDepth <= 0) break;
+    touched = true;
+    s.x += bnx * bestDepth;
+    s.y += bny * bestDepth;
+    const vn = s.vx * bnx + s.vy * bny;
+    if (vn < 0) {
+      const k = (1 + WALL_BOUNCE) * vn;
+      let hit = 1 - WALL_IMPACT * -vn;
+      if (hit < WALL_MIN_KEEP) hit = WALL_MIN_KEEP;
+      const f = WALL_KEEP * hit;
+      s.vx = (s.vx - k * bnx) * f;
+      s.vy = (s.vy - k * bny) * f;
+    }
+  }
+  s.onWall = touched;
+}
+
+function resolveStadiumWalls(s: CarState, track: StadiumTrack): void {
   const L = track.halfStraight;
   const px = s.x < -L ? -L : s.x > L ? L : s.x; // closest point on the axis
   const dx = s.x - px;

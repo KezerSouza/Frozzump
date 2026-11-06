@@ -8,7 +8,7 @@
 // RACE_MIN_RESTART_MS: time to read the results and for the others to finish.
 // ─────────────────────────────────────────────────────────────
 
-import type { GameMode, GameState, PlayerId, PlayerInfo, RoundResult } from "./protocol";
+import { FREE_GAME, type GameMode, type GameState, type PlayerId, type PlayerInfo, type RoundResult } from "./protocol";
 
 /** Delay between the first finisher and the next round. */
 export const RACE_NEXT_DELAY_MS = 20_000;
@@ -48,12 +48,32 @@ export class RoundHost {
   /**
    * @param roster   current player ids (participants of a new round)
    * @param onChange called with a fresh snapshot after every state change
+   * @param track    the track the room starts on (id + fingerprint)
    */
   constructor(
     private readonly roster: () => PlayerId[],
     private readonly onChange: (state: GameState) => void,
+    private track: { id: string; hash: number } = { id: FREE_GAME.track, hash: FREE_GAME.trackHash },
     private readonly clock: Clock = realClock,
   ) {}
+
+  /**
+   * Host picks another track. In race mode that starts a new round on it (everybody restarts
+   * together); in free mode everybody just restarts on their own. Results belong to the old track,
+   * so they are dropped.
+   */
+  setTrack(id: string, hash: number) {
+    if (id === this.track.id && hash === this.track.hash) return;
+    this.track = { id, hash };
+    if (this.mode === "race") {
+      this.startRound();
+      return;
+    }
+    this.clearTimer();
+    this.participants = [];
+    this.results = [];
+    this.emit();
+  }
 
   setMode(mode: GameMode) {
     if (mode === this.mode) return;
@@ -132,6 +152,8 @@ export class RoundHost {
       participants: [...this.participants],
       results: this.results.map((r) => ({ ...r })),
       nextInMs: this.deadline === null ? null : Math.max(0, this.deadline - this.clock.now()),
+      track: this.track.id,
+      trackHash: this.track.hash,
     };
   }
 
