@@ -37,6 +37,7 @@ export interface Ramp extends Rect {
 export interface TrackBase {
   id: string;
   name: string;
+  laps: number; //          laps of a race on this track
   snow: Rect[]; //          deep snow
   ramps: Ramp[]; //         boost ramps
   gates: Gate[]; //         gates[0] = start/finish line; the rest in race order
@@ -83,6 +84,7 @@ export const OVAL_1: StadiumTrack = {
   kind: "stadium",
   id: "oval-1",
   name: "Oval",
+  laps: 5,
   halfStraight: L,
   centerRadius: R,
   halfWidth: W,

@@ -1,9 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  IN_LEFT, IN_RIGHT, TOTAL_LAPS, createState, encodeReplay, getTrack, step, toBase64, type TrackDef,
-} from "../src/sim";
+import { encodeReplay, getTrack, toBase64, type GridTrack, type TrackDef } from "../src/sim";
 import type { GameState, LeaderEntry } from "../src/net/protocol";
 import { Room, type RoomEvents } from "../src/net/room";
+import { centerLine, drive } from "./autopilot";
 import { flush } from "./fakepeer";
 
 vi.mock("peerjs", async () => {
@@ -12,24 +11,14 @@ vi.mock("peerjs", async () => {
 });
 
 const oval = getTrack("oval-1")!;
-const serp = getTrack("serpentina")!;
+const bott = getTrack("bottleneck") as GridTrack;
 
 // ── a driver that completes a race on a grid track, and the replay of it ──
-const CENTER: [number, number][] = [[10, 10], [24, 10], [34, 20], [46, 20], [56, 10], [66, 10], [66, 40], [52, 40], [42, 32], [30, 32], [20, 40], [10, 40]];
-function serpentinaReplay(): { b64: string; time: number } {
-  const s = createState(serp);
-  const inputs: number[] = [];
-  let target = 1;
-  while (!s.finished && inputs.length < 120 * 400) {
-    const [tx, ty] = CENTER[target];
-    if (Math.hypot(tx - s.x, ty - s.y) < 6) target = (target + 1) % CENTER.length;
-    const cross = s.hx * (ty - s.y) - s.hy * (tx - s.x);
-    const input = cross > 0.05 ? IN_RIGHT : cross < -0.05 ? IN_LEFT : 0;
-    inputs.push(input);
-    step(s, serp, input);
-  }
-  expect(s.laps).toBe(TOTAL_LAPS);
-  return { b64: toBase64(encodeReplay(inputs)), time: s.finishSubticks };
+let cachedLine: ReturnType<typeof centerLine> | undefined;
+function bottleneckReplay(): { b64: string; time: number } {
+  const { state, inputs } = drive(bott, (cachedLine ??= centerLine(bott)));
+  expect(state.laps).toBe(bott.laps);
+  return { b64: toBase64(encodeReplay(inputs)), time: state.finishSubticks };
 }
 
 interface Seen {
@@ -68,19 +57,19 @@ afterEach(() => {
 
 describe("Room: the host's track", () => {
   it("a client learns the room's track from the welcome message, whatever it had before", async () => {
-    const { ce } = await open(serp, oval);
+    const { ce } = await open(bott, oval);
     expect(ce.seen.errors).toEqual([]);
     const g = ce.seen.games[ce.seen.games.length - 1];
-    expect(g.track).toBe("serpentina");
-    expect(g.trackHash).toBe((serp as { hash: number }).hash);
+    expect(g.track).toBe("bottleneck");
+    expect(g.trackHash).toBe(bott.hash);
   });
 
   it("when the host picks another track every peer is told, in free mode and in race mode", async () => {
-    const { host, he, ce } = await open(serp);
-    host.setTrack("circuito-grande");
+    const { host, he, ce } = await open(bott);
+    host.setTrack("boot");
     await flush();
-    expect(he.seen.games.at(-1)!.track).toBe("circuito-grande");
-    expect(ce.seen.games.at(-1)!.track).toBe("circuito-grande");
+    expect(he.seen.games.at(-1)!.track).toBe("boot");
+    expect(ce.seen.games.at(-1)!.track).toBe("boot");
 
     host.setMode("race");
     await flush();
@@ -94,16 +83,16 @@ describe("Room: the host's track", () => {
   });
 
   it("only the host can pick the track", async () => {
-    const { client, ce, he } = await open(serp);
+    const { client, ce, he } = await open(bott);
     const before = ce.seen.games.length;
     client.setTrack("oval-1");
     await flush();
     expect(ce.seen.games.length).toBe(before);
-    expect(he.seen.games.at(-1)!.track).toBe("serpentina");
+    expect(he.seen.games.at(-1)!.track).toBe("bottleneck");
   });
 
   it("an unknown track id is ignored", async () => {
-    const { host, he } = await open(serp);
+    const { host, he } = await open(bott);
     const before = he.seen.games.length;
     host.setTrack("does-not-exist");
     await flush();
@@ -113,8 +102,8 @@ describe("Room: the host's track", () => {
 
 describe("Room: best times are per track", () => {
   it("each track has its own board, and switching back brings the old times back", async () => {
-    const { host, he, ce } = await open(serp);
-    const run = serpentinaReplay();
+    const { host, he, ce } = await open(bott);
+    const run = bottleneckReplay();
     host.sendFinish(run.b64, run.time, 0); // the host records its own time
     await flush();
     expect(he.seen.boards.at(-1)!.map((e) => e.time)).toEqual([run.time]);
@@ -125,14 +114,14 @@ describe("Room: best times are per track", () => {
     expect(he.seen.boards.at(-1)).toEqual([]); // nothing on the oval yet
     expect(ce.seen.boards.at(-1)).toEqual([]);
 
-    host.setTrack("serpentina");
+    host.setTrack("bottleneck");
     await flush();
     expect(ce.seen.boards.at(-1)!.map((e) => e.time)).toEqual([run.time]);
   });
 
   it("the host verifies a client's replay on ITS track: valid there, rejected on another", async () => {
-    const { host, client, he } = await open(serp);
-    const run = serpentinaReplay();
+    const { host, client, he } = await open(bott);
+    const run = bottleneckReplay();
     client.sendFinish(run.b64, run.time, 0);
     await flush();
     expect(he.seen.boards.at(-1)!).toHaveLength(1);

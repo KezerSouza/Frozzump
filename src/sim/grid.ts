@@ -5,6 +5,10 @@
 //   cell: 1                     cell: size of one character, in meters (default 1)
 //   finish: right               finish: direction of travel across the finish line
 //   start: right                start:  direction the car faces at the start (default = finish)
+//   laps: 4                     laps: laps of a race on this track (1-99, default 5)
+//   smooth: 3                   smooth: rounds the walls (0-4, default 0). The steps that 1 m cells
+//                               leave on curves are averaged out; a wall never moves more than
+//                               about half a cell, so thin walls and tight corners survive
 //
 //   ##########                ← the drawing
 //   #S..F....#
@@ -22,7 +26,7 @@
 // exact same track from the same text.
 // ─────────────────────────────────────────────────────────────
 
-import { CAR_RADIUS } from "./params";
+import { CAR_RADIUS, TOTAL_LAPS } from "./params";
 import type { Bounds, Gate, GridTrack, Ramp, Rect } from "./track";
 
 /** The text of a track is wrong: the message says where and why (positions are 1-based, in the drawing). */
@@ -58,8 +62,8 @@ export function parseTrack(id: string, source: string): GridTrack {
   for (; i < lines.length && lines[i].trim() !== ""; i++) {
     const m = /^\s*([a-z]+)\s*:\s*(.*?)\s*$/.exec(lines[i]);
     if (!m) throw new TrackError(`Cabeçalho inválido: "${lines[i]}" (esperado "chave: valor").`);
-    if (!["name", "cell", "finish", "start"].includes(m[1])) {
-      throw new TrackError(`Chave de cabeçalho desconhecida: "${m[1]}" (use name, cell, finish ou start).`);
+    if (!["name", "cell", "finish", "start", "smooth", "laps"].includes(m[1])) {
+      throw new TrackError(`Chave de cabeçalho desconhecida: "${m[1]}" (use name, cell, finish, start, smooth ou laps).`);
     }
     header[m[1]] = m[2];
   }
@@ -69,6 +73,14 @@ export function parseTrack(id: string, source: string): GridTrack {
   if (!finishName) throw new TrackError('Falta "finish: right|left|up|down" no cabeçalho (sentido de travessia da linha de chegada).');
   const finishDir = DIRS[finishName];
   if (!finishDir) throw new TrackError(`"finish" inválido: "${finishName}" (use right, left, up ou down).`);
+  const smooth = header.smooth === undefined ? 0 : Number(header.smooth);
+  if (!Number.isInteger(smooth) || smooth < 0 || smooth > 4) {
+    throw new TrackError(`"smooth" precisa ser um inteiro de 0 a 4 (veio "${header.smooth}").`);
+  }
+  const laps = header.laps === undefined ? TOTAL_LAPS : Number(header.laps);
+  if (!Number.isInteger(laps) || laps < 1 || laps > 99) {
+    throw new TrackError(`"laps" precisa ser um inteiro de 1 a 99 (veio "${header.laps}").`);
+  }
   const startDir = header.start === undefined ? finishDir : DIRS[header.start];
   if (!startDir) throw new TrackError(`"start" inválido: "${header.start}" (use right, left, up ou down).`);
 
@@ -301,7 +313,7 @@ export function parseTrack(id: string, source: string): GridTrack {
       if (next === undefined) throw new TrackError("Contorno aberto na pista (bug do carregador).");
       cur = next;
     }
-    loopsHalf.push(simplify(pts));
+    loopsHalf.push(simplify(smoothLoop(pts, smooth * 8, 0.45 * 2))); // (half-cell units: 2 = one cell)
   }
 
   const half = cell / 2;
@@ -345,6 +357,7 @@ export function parseTrack(id: string, source: string): GridTrack {
     kind: "grid",
     id,
     name: header.name ?? id,
+    laps,
     cell,
     cols,
     rows,
@@ -360,6 +373,33 @@ export function parseTrack(id: string, source: string): GridTrack {
   };
 }
 
+/**
+ * Smooths a closed outline: each round moves every vertex to the (1, 2, 1) / 4 average of itself and
+ * its two neighbours, which irons out the little steps of a drawing and leaves straight stretches
+ * straight. It stops early, before any vertex has moved more than `maxMove` from where it started,
+ * so a thin wall or a tight corner is rounded as far as it can be without collapsing.
+ * Only + * / and sqrt, so every peer gets the same numbers.
+ */
+function smoothLoop(orig: [number, number][], rounds: number, maxMove: number): [number, number][] {
+  const n = orig.length;
+  if (n < 4) return orig;
+  let cur = orig;
+  for (let r = 0; r < rounds; r++) {
+    const next: [number, number][] = [];
+    let worst = 0;
+    for (let i = 0; i < n; i++) {
+      const a = cur[(i + n - 1) % n], b = cur[i], c = cur[(i + 1) % n];
+      const x = (a[0] + 2 * b[0] + c[0]) / 4, y = (a[1] + 2 * b[1] + c[1]) / 4;
+      const moved = Math.sqrt((x - orig[i][0]) * (x - orig[i][0]) + (y - orig[i][1]) * (y - orig[i][1]));
+      if (moved > worst) worst = moved;
+      next.push([x, y]);
+    }
+    if (worst > maxMove) break;
+    cur = next;
+  }
+  return cur;
+}
+
 /** Drops the vertices that lie in the middle of a straight stretch (long walls become one segment). */
 function simplify(pts: [number, number][]): [number, number][] {
   const n = pts.length;
@@ -367,7 +407,7 @@ function simplify(pts: [number, number][]): [number, number][] {
   for (let i = 0; i < n; i++) {
     const a = pts[(i + n - 1) % n], b = pts[i], c = pts[(i + 1) % n];
     const cross = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
-    if (cross !== 0) out.push(b);
+    if (Math.abs(cross) > 1e-9) out.push(b); // (smoothing can leave 1e-15 noise on a straight stretch)
   }
   return out;
 }

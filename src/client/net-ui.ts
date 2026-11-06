@@ -170,7 +170,8 @@ export interface RoomBarActions {
 
 export function mountRoomBar(
   actions: RoomBarActions,
-  tracks: { id: string; name: string }[],
+  /** `error`: the drawing is invalid, so it is listed (disabled) with the reason instead of crashing the game */
+  tracks: { id: string; name: string; error?: string }[],
 ): { update: (s: RoomBarState) => void } {
   const root = document.createElement("div");
   root.id = "roombar";
@@ -217,7 +218,14 @@ export function mountRoomBar(
   const free = $("rb-free"), race = $("rb-race");
   const restart = $("rb-restart") as HTMLButtonElement, leave = $("rb-leave");
   const trackSel = $("rb-track") as HTMLSelectElement;
-  for (const t of tracks) trackSel.add(new Option(t.name, t.id));
+  for (const t of tracks) {
+    const opt = new Option(t.error ? `${t.name} ⚠ inválida` : t.name, t.id);
+    if (t.error) {
+      opt.disabled = true;
+      opt.title = t.error;
+    }
+    trackSel.add(opt);
+  }
   trackSel.addEventListener("change", () => {
     trackSel.blur(); // hand the keyboard back to the game (a focused <select> would eat the arrow keys)
     actions.onTrack(trackSel.value);

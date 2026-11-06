@@ -1,7 +1,7 @@
 import {
   AIR_TICKS, BOOST_SPEED, CAR_RADIUS, DRAG_SNOW, DRAG_TRACK, DT, IN_LEFT, IN_RIGHT,
   LAT_KEEP_AIR, LAT_KEEP_SNOW, LAT_KEEP_TRACK, MAX_YAW, STEER_AIR_SCALE, STEER_RATE,
-  SUBTICKS_PER_TICK, THRUST, TOTAL_LAPS, V_REF, WALL_BOUNCE, WALL_IMPACT, WALL_KEEP, WALL_MIN_KEEP, WALL_PIVOT,
+  SUBTICKS_PER_TICK, THRUST, V_REF, WALL_BOUNCE, WALL_IMPACT, WALL_KEEP, WALL_MIN_KEEP, WALL_PIVOT,
 } from "./params";
 import { gateCrossing, inRects, type GridTrack, type StadiumTrack, type TrackDef } from "./track";
 
@@ -116,7 +116,7 @@ export function step(s: CarState, track: TrackDef, input: number): void {
         const sub = (s.tick - 1) * SUBTICKS_PER_TICK + Math.floor(t * SUBTICKS_PER_TICK);
         s.laps++;
         s.lapSubticks.push(sub);
-        if (s.laps >= TOTAL_LAPS) {
+        if (s.laps >= track.laps) {
           s.finished = true;
           s.finishSubticks = sub;
         }

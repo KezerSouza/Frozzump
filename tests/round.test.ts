@@ -106,8 +106,8 @@ describe("RoundHost (race mode)", () => {
     rh.setMode("race");
     rh.finish(P("host"), 1, 5000);
     expect(last().results).toHaveLength(1);
-    rh.setTrack("serpentina", 123);
-    expect(last().track).toBe("serpentina");
+    rh.setTrack("boot", 123);
+    expect(last().track).toBe("boot");
     expect(last().trackHash).toBe(123);
     expect(last().round).toBe(2);
     expect(last().results).toEqual([]);
@@ -119,10 +119,10 @@ describe("RoundHost (race mode)", () => {
 
   it("picking another track in free mode announces it without starting a round; the same track is a no-op", () => {
     const { rh, states, last } = setup();
-    rh.setTrack("serpentina", 123);
-    expect(last()).toMatchObject({ mode: "free", round: 0, track: "serpentina", trackHash: 123 });
+    rh.setTrack("boot", 123);
+    expect(last()).toMatchObject({ mode: "free", round: 0, track: "boot", trackHash: 123 });
     const n = states.length;
-    rh.setTrack("serpentina", 123);
+    rh.setTrack("boot", 123);
     expect(states.length).toBe(n);
   });
 

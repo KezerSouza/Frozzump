@@ -53,7 +53,7 @@ track is **drawn as text**, so making a new one is just editing a file.
 
 ### Drawing a track
 
-Create `src/sim/tracks/my-track.ts` (copy `serpentina.ts`), register it in `src/sim/registry.ts`
+Create `src/sim/tracks/my-track.ts` (copy `boot.ts`), register it in `src/sim/registry.ts`
 (`parseTrack("my-track", MY_TRACK)`) and reload. A track is a short header, a blank line and the drawing:
 
 ```
@@ -61,6 +61,8 @@ name: My track        ← shown in the picker
 cell: 1               ← size of one character in meters (default 1; 0.5 = smoother walls, 4x the characters)
 finish: right         ← direction of travel across the finish line (right | left | up | down)
 start: right          ← direction the car faces at the start (optional, default = finish)
+smooth: 3             ← rounds the walls, 0-4 (optional, default 0)
+laps: 4               ← laps of a race on this track, 1-99 (optional, default 5)
 
 ##########
 #S..F....#
@@ -82,8 +84,10 @@ this and says where and why when something is wrong (`TrackError`): start glued 
 that doesn't reach the walls, checkpoints out of order, a track that isn't a closed circuit,
 unreachable pieces of road.
 
-The walls are the outline of the drawing (diagonals are smooth; round corners show steps as big as
-a cell, so use a smaller `cell` for rounder ones). A big track needs nothing else: the camera zooms
+The walls are the outline of the drawing. Diagonals are already smooth, but curves show steps as big
+as a cell: `smooth: 3` (or 4) averages them out into round arcs (a wall never moves more than about
+half a cell, so thin walls and tight corners survive). A smaller `cell` also gives rounder walls, at
+the price of a drawing 4x as big. A big track needs nothing else: the camera zooms
 out to fit it. Editing a drawing starts fresh records for it (the hash of the drawing is part of the
 key of the saved best time).
 

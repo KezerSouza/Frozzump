@@ -12,7 +12,7 @@
 // ─────────────────────────────────────────────────────────────
 
 import { Peer, type DataConnection } from "peerjs";
-import { TOTAL_LAPS, fromBase64, decodeReplay, getTrack, trackHash, verifyReplay, type TrackDef } from "../sim";
+import { fromBase64, decodeReplay, getTrack, trackHash, verifyReplay, type TrackDef } from "../sim";
 import {
   HEARTBEAT_MS,
   FREE_GAME,
@@ -246,7 +246,7 @@ export class Room {
     try {
       const inputs = decodeReplay(fromBase64(replayB64));
       const res = verifyReplay(this.track, inputs);
-      if (!res.finished || res.lapSubticks.length < TOTAL_LAPS) return; // invalid run
+      if (!res.finished || res.lapSubticks.length < this.track.laps) return; // invalid run
       time = res.finishSubticks;
     } catch {
       return; // malformed replay → ignore

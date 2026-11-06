@@ -160,6 +160,71 @@ describe("walls of a grid track", () => {
   });
 });
 
+describe("laps: the number of laps is part of the track", () => {
+  it("defaults to TOTAL_LAPS and is read from the header", () => {
+    expect(ring().laps).toBe(TOTAL_LAPS);
+    expect(ring(undefined, "name: ring\nfinish: right\nlaps: 4").laps).toBe(4);
+  });
+
+  it("must be a whole number from 1 to 99", () => {
+    for (const bad of ["0", "-1", "2.5", "abc", "100"]) {
+      expect(() => ring(undefined, `name: ring\nfinish: right\nlaps: ${bad}`), bad).toThrow(TrackError);
+    }
+  });
+});
+
+describe("smooth: rounded walls", () => {
+  const corners = (t: GridTrack) => {
+    // sharpest turn (degrees) at any vertex of any loop
+    let worst = 0;
+    for (const lp of t.loops) {
+      const n = lp.length / 2;
+      for (let i = 0; i < n; i++) {
+        const a = [lp[((i + n - 1) % n) * 2], lp[((i + n - 1) % n) * 2 + 1]], b = [lp[i * 2], lp[i * 2 + 1]], c = [lp[((i + 1) % n) * 2], lp[((i + 1) % n) * 2 + 1]];
+        const ang = Math.abs(Math.atan2((b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]), (b[0] - a[0]) * (c[0] - b[0]) + (b[1] - a[1]) * (c[1] - b[1])));
+        worst = Math.max(worst, (ang * 180) / Math.PI);
+      }
+    }
+    return worst;
+  };
+  // a ring with a diagonal bite out of it, so there are curves to round
+  const bumpy = (smooth: number) =>
+    ring((g) => { for (let r = 1; r <= 3; r++) for (let c = 16; c <= 18; c++) if (r + (18 - c) < 4) g[r][c] = "#"; }, `name: ring\nfinish: right\nsmooth: ${smooth}`);
+
+  it("rounds the corners: the sharpest turn of the outline gets much gentler", () => {
+    const hard = corners(bumpy(0)), soft = corners(bumpy(3));
+    expect(hard).toBeGreaterThan(44); // a 90 degree corner of the drawing is already cut into two 45 degree turns
+    // (a small, tight corner is only rounded as far as the cap allows: 45 degrees -> about 29 here;
+    //  long gentle curves get much further, see the Boot track)
+    expect(soft).toBeLessThan(hard * 0.75);
+  });
+
+  it("is off by default, and the same text gives the same walls every time", () => {
+    expect(ring().segs).toEqual(ring(undefined, "name: ring\nfinish: right\nsmooth: 0").segs);
+    expect(bumpy(3).segs).toEqual(bumpy(3).segs);
+    expect(bumpy(3).segs.length).toBeGreaterThan(bumpy(0).segs.length);
+  });
+
+  it("only accepts 0 to 4", () => {
+    expect(() => bumpy(5)).toThrow(/smooth/);
+    expect(() => ring(undefined, "name: ring\nfinish: right\nsmooth: x")).toThrow(/smooth/);
+  });
+
+  it("the car still never gets closer than its radius to a smoothed wall, nor leaves the road", () => {
+    const t = bumpy(3);
+    const s = createState(t);
+    let seed = 777;
+    const rnd = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 2 ** 32;
+    let input = 0;
+    for (let i = 0; i < 120 * 40; i++) {
+      if (i % 20 === 0) input = [0, IN_LEFT, IN_RIGHT][Math.floor(rnd() * 3)];
+      step(s, t, input);
+      expect(roadAt(t, s.x, s.y)).toBe(true);
+      expect(minWallDistance(t, s.x, s.y)).toBeGreaterThanOrEqual(CAR_RADIUS - 1e-6);
+    }
+  });
+});
+
 describe("laps on a grid track", () => {
   it("a driver following the corridors completes the race: gates inferred from the drawing count the laps", () => {
     const t = ring();

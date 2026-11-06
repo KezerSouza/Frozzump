@@ -1,5 +1,5 @@
 import {
-  DEFAULT_TRACK_ID, DT, SIM_VERSION, SUBTICKS_PER_TICK, TICK_RATE, TOTAL_LAPS, TRACKS,
+  BROKEN_TRACKS, DEFAULT_TRACK_ID, DT, SIM_VERSION, SUBTICKS_PER_TICK, TICK_RATE, TRACKS,
   createState, decodeReplay, encodeReplay, fromBase64, getTrack, step, toBase64, trackHash,
   type CarState, type TrackDef,
 } from "../sim";
@@ -311,7 +311,7 @@ function buildRank(): RankRow[] {
       row: {
         name: info.name,
         color: info.color,
-        lap: Math.min(s.laps + 1, TOTAL_LAPS),
+        lap: Math.min(s.laps + 1, track.laps),
         isSelf,
         finished: s.finished,
         waiting,
@@ -351,7 +351,7 @@ function buildRaceView(now: number): RaceView | null {
       row: {
         pos: 0, name: info.name, color: info.color, isSelf, done: false,
         // finished locally but not yet confirmed by the host → show the time already
-        status: !st ? "correndo…" : st.finished ? fmtSubticks(st.finishSubticks) : `volta ${Math.min(st.laps + 1, TOTAL_LAPS)}`,
+        status: !st ? "correndo…" : st.finished ? fmtSubticks(st.finishSubticks) : `volta ${Math.min(st.laps + 1, track.laps)}`,
       },
     });
   }
@@ -368,6 +368,7 @@ function buildRaceView(now: number): RaceView | null {
   const wait = restartWaitNow(now);
   return {
     round: game.round,
+    laps: track.laps,
     rows,
     nextText,
     hostHint: !room.isHost || wait === null
@@ -622,8 +623,12 @@ const roomBar = mountRoomBar(
     onRestart: () => room?.restartRound(),
     onTrack: pickTrack,
   },
-  TRACKS.map((t) => ({ id: t.id, name: t.name })),
+  [
+    ...TRACKS.map((t) => ({ id: t.id, name: t.name })),
+    ...BROKEN_TRACKS.map((b) => ({ id: b.id, name: b.id, error: b.error })),
+  ],
 );
+for (const b of BROKEN_TRACKS) console.error(`Pista "${b.id}" inválida: ${b.error}`);
 keys.onOpenLobby = () => { if (!room) lobby.reopen(); };
 
 reset();

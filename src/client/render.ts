@@ -1,4 +1,4 @@
-import { TOTAL_LAPS, type CarState, type TrackDef } from "../sim";
+import type { CarState, TrackDef } from "../sim";
 
 export interface Pose { x: number; y: number; hx: number; hy: number }
 export interface Particle { x: number; y: number; vx: number; vy: number; life: number; max: number; size: number }
@@ -16,7 +16,7 @@ export interface RemoteCar {
 export interface RankRow {
   name: string;
   color: string;
-  lap: number; // 1..TOTAL_LAPS
+  lap: number; // 1..laps of the track
   isSelf: boolean;
   finished: boolean;
   waiting: boolean; // race mode: not in the current round (joined late)
@@ -43,6 +43,7 @@ export interface RaceRow {
 /** Race-mode overlay (null in free mode). */
 export interface RaceView {
   round: number;
+  laps: number; // laps of this track
   rows: RaceRow[];
   nextText: string; // "Próxima corrida em 14s" / "Aguardando o 1º colocado…"
   hostHint: string | null; // host only, once the round can be restarted
@@ -305,8 +306,8 @@ function drawHud(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: numbe
   ctx.fillStyle = C.text; ctx.font = `600 ${Math.round(Math.min(44, w * 0.04))}px ${MONO}`;
   ctx.fillText(sc.timeText, pad, pad);
   ctx.fillStyle = C.muted; ctx.font = `500 ${Math.round(Math.min(16, w * 0.016))}px ${SANS}`;
-  const lap = Math.min(sc.state.laps + 1, TOTAL_LAPS);
-  ctx.fillText(`Lap ${lap} of ${TOTAL_LAPS}`, pad, pad + Math.min(52, w * 0.05));
+  const lap = Math.min(sc.state.laps + 1, sc.track.laps);
+  ctx.fillText(`Lap ${lap} of ${sc.track.laps}`, pad, pad + Math.min(52, w * 0.05));
 
   ctx.textAlign = "right";
   ctx.fillText(`Best ${sc.bestText}`, w - pad, pad + 6);
@@ -366,7 +367,7 @@ function drawRacePanel(ctx: CanvasRenderingContext2D, w: number, h: number, r: R
   ctx.font = `700 20px ${SANS}`;
   ctx.fillText(r.waiting ? "Aguardando a próxima corrida…" : `Corrida ${r.round} — Resultado`, w / 2, by + 16, bw - 24);
   ctx.fillStyle = C.muted; ctx.font = `500 13px ${SANS}`;
-  ctx.fillText(r.waiting ? `Corrida ${r.round} em andamento` : `${TOTAL_LAPS} voltas`, w / 2, by + 42);
+  ctx.fillText(r.waiting ? `Corrida ${r.round} em andamento` : `${r.laps} voltas`, w / 2, by + 42);
 
   const top = by + 64, left = bx + 20, right = bx + bw - 20, sw = 11;
   ctx.textBaseline = "middle";
