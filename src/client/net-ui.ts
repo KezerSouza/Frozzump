@@ -178,28 +178,28 @@ export function mountRoomBar(
   root.innerHTML = `
     <style>
       #roombar {
-        position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 5;
-        display: flex; gap: 6px; align-items: center;
-        font-family: "Avenir Next","Segoe UI",system-ui,sans-serif; font-size: 13px; color: #e8f1f7;
+        position: fixed; top: 15px; left: 50%; transform: translateX(-50%); z-index: 5;
+        display: flex; gap: 7.5px; align-items: center;
+        font-family: "Avenir Next","Segoe UI",system-ui,sans-serif; font-size: 16.25px; color: #e8f1f7;
       }
       #roombar .code {
-        padding: 6px 10px; border-radius: 8px; background: rgba(17,34,58,0.85);
-        font-family: ui-monospace, monospace; letter-spacing: 2px;
+        padding: 7.5px 12.5px; border-radius: 10px; background: rgba(17,34,58,0.85);
+        font-family: ui-monospace, monospace; letter-spacing: 2.5px;
       }
       #roombar button {
-        border: 1px solid #2b4866; border-radius: 8px; padding: 6px 12px; font-size: 13px; font-weight: 600;
+        border: 1px solid #2b4866; border-radius: 10px; padding: 7.5px 15px; font-size: 16.25px; font-weight: 600;
         cursor: pointer; background: rgba(17,34,58,0.85); color: #e8f1f7;
       }
       #roombar button.on { background: #3da5ff; color: #07121f; border-color: #3da5ff; }
       #roombar button:disabled { opacity: 0.45; cursor: default; }
       #roombar select {
-        border: 1px solid #2b4866; border-radius: 8px; padding: 6px 8px; font-size: 13px; font-weight: 600;
-        background: rgba(17,34,58,0.85); color: #e8f1f7; max-width: 170px;
+        border: 1px solid #2b4866; border-radius: 10px; padding: 7.5px 10px; font-size: 16.25px; font-weight: 600;
+        background: rgba(17,34,58,0.85); color: #e8f1f7; max-width: 212px;
       }
       #roombar select:disabled { opacity: 0.7; }
       #roombar .seg { display: flex; }
-      #roombar .seg button:first-child { border-radius: 8px 0 0 8px; }
-      #roombar .seg button:last-child { border-radius: 0 8px 8px 0; border-left: 0; }
+      #roombar .seg button:first-child { border-radius: 10px 0 0 10px; }
+      #roombar .seg button:last-child { border-radius: 0 10px 10px 0; border-left: 0; }
     </style>
     <select id="rb-track" title="Pista"></select>
     <button id="rb-mp">Multiplayer</button>

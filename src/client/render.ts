@@ -1,5 +1,8 @@
 import type { CarState, TrackDef } from "../sim";
 
+/** The bigger HUD pieces (Best, Lap, controls guide, players, best times) are drawn at this multiple of their old size. */
+const UI_SCALE = 1.25;
+
 export interface Pose { x: number; y: number; hx: number; hy: number }
 export interface Particle { x: number; y: number; vx: number; vy: number; life: number; max: number; size: number }
 
@@ -305,21 +308,25 @@ function drawHud(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: numbe
   ctx.textBaseline = "top"; ctx.textAlign = "left";
   ctx.fillStyle = C.text; ctx.font = `600 ${Math.round(Math.min(44, w * 0.04))}px ${MONO}`;
   ctx.fillText(sc.timeText, pad, pad);
-  ctx.fillStyle = C.muted; ctx.font = `500 ${Math.round(Math.min(16, w * 0.016))}px ${SANS}`;
+  const baseFs = Math.min(16, w * 0.016);
+  ctx.fillStyle = C.muted; ctx.font = `500 ${Math.round(baseFs * UI_SCALE)}px ${SANS}`;
   const lap = Math.min(sc.state.laps + 1, sc.track.laps);
   ctx.fillText(`Lap ${lap} of ${sc.track.laps}`, pad, pad + Math.min(52, w * 0.05));
 
   ctx.textAlign = "right";
   ctx.fillText(`Best ${sc.bestText}`, w - pad, pad + 6);
-  sc.splits.forEach((s, i) => ctx.fillText(`${i + 1}  ${s}`, w - pad, pad + 32 + i * 20));
+  // the personal splits keep their size; they start below the (bigger) Best line
+  const splitsTop = pad + 6 + Math.round(baseFs * UI_SCALE * 1.25) + 6;
+  ctx.font = `500 ${Math.round(baseFs)}px ${SANS}`;
+  sc.splits.forEach((s, i) => ctx.fillText(`${i + 1}  ${s}`, w - pad, splitsTop + i * 20));
 
   // shared lap-time leaderboard (top-right, below personal splits)
-  drawLeaderboard(ctx, w, pad, sc);
+  drawLeaderboard(ctx, w, splitsTop + sc.splits.length * 20, sc);
   // connected-players rank (left side)
-  drawRank(ctx, pad, sc);
+  drawRank(ctx, pad, sc, pad + Math.min(52, w * 0.05) + Math.round(baseFs * UI_SCALE * 1.25));
 
   ctx.textAlign = "center"; ctx.textBaseline = "bottom"; ctx.fillStyle = C.muted;
-  ctx.font = `500 ${Math.round(Math.min(15, w * 0.015))}px ${SANS}`;
+  ctx.font = `500 ${Math.round(Math.min(15, w * 0.015) * UI_SCALE)}px ${SANS}`;
   const room = sc.roomCode ? `   room ${sc.roomCode}${sc.modeText ? ` · ${sc.modeText}` : ""}` : "   M multiplayer";
   const restart = sc.restartKey ? "   R restart" : "";
   ctx.fillText(`← → steer${restart}   G ghost ${sc.ghostOn ? "on" : "off"}   O others ${sc.othersOn ? "on" : "off"}${room}`, w / 2, h - pad * 0.8);
@@ -406,45 +413,45 @@ function drawRacePanel(ctx: CanvasRenderingContext2D, w: number, h: number, r: R
 }
 
 /** Connected-players rank (1..15) on the left side. */
-function drawRank(ctx: CanvasRenderingContext2D, pad: number, sc: Scene) {
+function drawRank(ctx: CanvasRenderingContext2D, pad: number, sc: Scene, lapBottom: number) {
   if (sc.rank.length === 0) return;
   const x = pad;
-  const top = pad + 86;
-  const rowH = 22;
-  const sw = 11; // color swatch size
+  const top = Math.max(pad + 86, lapBottom + 20 * UI_SCALE + 4); // below the (bigger) "Lap x of y" line
+  const rowH = 22 * UI_SCALE;
+  const sw = 11 * UI_SCALE; // color swatch size
 
   ctx.textAlign = "left"; ctx.textBaseline = "middle";
-  ctx.font = `600 12px ${SANS}`; ctx.fillStyle = C.muted;
-  ctx.fillText(`PLAYERS ${sc.rank.length}/15`, x, top - 14);
+  ctx.font = `600 ${12 * UI_SCALE}px ${SANS}`; ctx.fillStyle = C.muted;
+  ctx.fillText(`PLAYERS ${sc.rank.length}/15`, x, top - 14 * UI_SCALE);
 
-  ctx.font = `500 13px ${SANS}`;
+  ctx.font = `500 ${13 * UI_SCALE}px ${SANS}`;
   sc.rank.forEach((row, i) => {
     const y = top + i * rowH + rowH / 2;
     ctx.fillStyle = C.muted; ctx.textAlign = "right";
-    ctx.fillText(`${i + 1}`, x + 14, y);
+    ctx.fillText(`${i + 1}`, x + 14 * UI_SCALE, y);
     ctx.fillStyle = row.color;
-    ctx.fillRect(x + 20, y - sw / 2, sw, sw);
+    ctx.fillRect(x + 20 * UI_SCALE, y - sw / 2, sw, sw);
     ctx.textAlign = "left";
     ctx.fillStyle = row.isSelf ? C.text : C.muted;
     const lapTxt = row.waiting ? "—" : row.finished ? "fin" : `L${row.lap}`;
     const name = row.name.length > 10 ? row.name.slice(0, 10) + "…" : row.name;
-    ctx.fillText(`${name}  ${lapTxt}`, x + 20 + sw + 8, y);
+    ctx.fillText(`${name}  ${lapTxt}`, x + 20 * UI_SCALE + sw + 8 * UI_SCALE, y);
   });
 }
 
 /** Shared lap-time leaderboard (best times), top-right under the splits. */
-function drawLeaderboard(ctx: CanvasRenderingContext2D, w: number, pad: number, sc: Scene) {
+function drawLeaderboard(ctx: CanvasRenderingContext2D, w: number, splitsBottom: number, sc: Scene) {
   if (sc.leaderboard.length === 0) return;
-  const x = w - pad;
-  const top = pad + 32 + Math.max(sc.splits.length, 0) * 20 + 26;
-  const rowH = 20;
-  const sw = 10;
+  const x = w - Math.max(16, w * 0.02);
+  const top = splitsBottom + 26 + 8 * UI_SCALE;
+  const rowH = 20 * UI_SCALE;
+  const sw = 10 * UI_SCALE;
 
   ctx.textAlign = "right"; ctx.textBaseline = "middle";
-  ctx.font = `600 12px ${SANS}`; ctx.fillStyle = C.muted;
-  ctx.fillText("BEST TIMES", x, top - 14);
+  ctx.font = `600 ${12 * UI_SCALE}px ${SANS}`; ctx.fillStyle = C.muted;
+  ctx.fillText("BEST TIMES", x, top - 14 * UI_SCALE);
 
-  ctx.font = `500 13px ${MONO}`;
+  ctx.font = `500 ${13 * UI_SCALE}px ${MONO}`;
   sc.leaderboard.slice(0, 8).forEach((row, i) => {
     const y = top + i * rowH + rowH / 2;
     ctx.textAlign = "right";
@@ -452,10 +459,10 @@ function drawLeaderboard(ctx: CanvasRenderingContext2D, w: number, pad: number, 
     ctx.fillText(row.timeText, x, y);
     const name = row.name.length > 8 ? row.name.slice(0, 8) + "…" : row.name;
     const tw = ctx.measureText(row.timeText).width;
-    ctx.fillText(name, x - tw - 10, y);
+    ctx.fillText(name, x - tw - 10 * UI_SCALE, y);
     // color swatch to the left of the name
     const nw = ctx.measureText(name).width;
     ctx.fillStyle = row.color;
-    ctx.fillRect(x - tw - 10 - nw - 8 - sw, y - sw / 2, sw, sw);
+    ctx.fillRect(x - tw - 10 * UI_SCALE - nw - 8 * UI_SCALE - sw, y - sw / 2, sw, sw);
   });
 }
