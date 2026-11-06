@@ -6,7 +6,8 @@
 //   - Room.host(code, name)   → become the room owner
 //   - Room.join(code, name)   → connect to an existing room
 //
-// The host owns presence, color assignment and the lap-time leaderboard.
+// The host owns presence, color assignment (a color is never shared by two
+// players; car models are free) and the lap-time leaderboard.
 // Everything travels over RTCDataChannels; the PeerJS public broker is
 // only used for the initial signaling handshake.
 // ─────────────────────────────────────────────────────────────
@@ -14,6 +15,7 @@
 import { Peer, type DataConnection } from "peerjs";
 import { fromBase64, decodeReplay, getTrack, trackHash, verifyReplay, type TrackDef } from "../sim";
 import {
+  DEFAULT_CAR,
   HEARTBEAT_MS,
   FREE_GAME,
   LOCAL_SIM_VERSION,
@@ -23,12 +25,14 @@ import {
   PEER_TIMEOUT_MS,
   PROTOCOL_VERSION,
   codeToPeerId,
+  isCarModel,
   isNetMsg,
   type ClientMsg,
   type GameMode,
   type GameState,
   type HostMsg,
   type LeaderEntry,
+  type Look,
   type NetMsg,
   type PlayerId,
   type PlayerInfo,
@@ -56,6 +60,7 @@ export interface RoomEvents {
 }
 
 export type RoomStatus = "connecting" | "open" | "closed" | "error";
+
 
 export class Room {
   readonly code: string;
@@ -88,29 +93,30 @@ export class Room {
       : new Peer(); // clients get a random id from the broker
   }
 
-  /** `track`: where the room starts (the host can change it later with setTrack). */
-  static host(code: string, name: string, events: RoomEvents, track: TrackDef): Room {
+  /** `track`: where the room starts (the host can change it later with setTrack). `look`: preferred car / color. */
+  static host(code: string, name: string, events: RoomEvents, track: TrackDef, look: Look = {}): Room {
     const room = new Room(code, true, events, track);
-    room.startAsHost(name);
+    room.startAsHost(name, look);
     return room;
   }
 
   /** `track` is only a placeholder: the host's welcome message says which one the room really uses. */
-  static join(code: string, name: string, events: RoomEvents, track: TrackDef): Room {
+  static join(code: string, name: string, events: RoomEvents, track: TrackDef, look: Look = {}): Room {
     const room = new Room(code, false, events, track);
-    room.startAsClient(name);
+    room.startAsClient(name, look);
     return room;
   }
 
   // ── Host ─────────────────────────────────────────────────────
 
-  private startAsHost(name: string) {
+  private startAsHost(name: string, look: Look) {
     this.events.onStatus?.("connecting");
     this.peer.on("open", (id) => {
       this.self = {
         id: "host",
         name: name.trim().slice(0, MAX_NAME_LEN) || "Host",
-        color: PALETTE[0],
+        color: this.grantColor(look.color),
+        car: isCarModel(look.car) ? look.car : DEFAULT_CAR,
         isHost: true,
       };
       this.roster.set("host", this.self);
@@ -162,11 +168,11 @@ export class Room {
           setTimeout(() => conn.close(), 50);
           return;
         }
-        const color = this.nextColor();
         const info: PlayerInfo = {
           id,
           name: (msg.name || "").trim().slice(0, MAX_NAME_LEN) || "Player",
-          color,
+          color: this.grantColor(msg.color),
+          car: isCarModel(msg.car) ? msg.car : DEFAULT_CAR,
           isHost: false,
         };
         this.conns.set(id, conn);
@@ -183,6 +189,9 @@ export class Room {
         this.events.onRoster?.(this.rosterList());
         break;
       }
+      case "look":
+        this.applyLook(id, msg);
+        break;
       case "ping":
         break; // activity already recorded above
       case "bye":
@@ -302,14 +311,49 @@ export class Room {
     this.events.onLeaderboard?.(this.leaderboard);
   }
 
-  private nextColor(): string {
+  /** The wanted color when it is a palette color nobody has yet, otherwise the first free one. */
+  private grantColor(wanted: string | undefined): string {
     const used = new Set(this.rosterList().map((p) => p.color));
+    if (wanted && PALETTE.includes(wanted) && !used.has(wanted)) return wanted;
     return PALETTE.find((c) => !used.has(c)) ?? PALETTE[PALETTE.length - 1];
+  }
+
+  /**
+   * Host: a player changes car and/or color. Any car is fine; a color must be in the palette and not
+   * belong to someone else, or that part of the request is ignored (two players asking for the same
+   * free color at once: the first one gets it). The new color is also applied to that player's best times.
+   */
+  private applyLook(id: PlayerId, look: Look) {
+    const info = this.roster.get(id);
+    if (!info) return;
+    let changed = false;
+    if (isCarModel(look.car) && look.car !== info.car) {
+      info.car = look.car;
+      changed = true;
+    }
+    const color = look.color;
+    if (color && color !== info.color && PALETTE.includes(color) && !this.rosterList().some((p) => p.color === color)) {
+      info.color = color;
+      changed = true;
+      for (const board of this.boards.values()) for (const e of board) if (e.id === id) e.color = color;
+      this.broadcast({ t: "leaderboard", leaderboard: this.leaderboard });
+      this.events.onLeaderboard?.(this.leaderboard);
+    }
+    if (!changed) return;
+    this.broadcast({ t: "roster", players: this.rosterList() });
+    this.events.onRoster?.(this.rosterList());
+    if (id === "host") this.events.onSelf?.(info);
+  }
+
+  /** Change our own car and/or color (the host decides whether the color is free). */
+  setLook(look: Look) {
+    if (this.isHost) this.applyLook("host", look);
+    else if (this.toHost?.open) this.sendTo(this.toHost, { t: "look", color: look.color, car: look.car });
   }
 
   // ── Client ───────────────────────────────────────────────────
 
-  private startAsClient(name: string) {
+  private startAsClient(name: string, look: Look) {
     this.events.onStatus?.("connecting");
     this.peer.on("open", () => {
       const conn = this.peer.connect(codeToPeerId(this.code), { reliable: true });
@@ -320,6 +364,8 @@ export class Room {
           protocol: PROTOCOL_VERSION,
           sim: LOCAL_SIM_VERSION,
           name,
+          color: look.color,
+          car: look.car,
         });
         this.hostLastSeen = Date.now();
         this.startClientHeartbeat();
@@ -378,9 +424,15 @@ export class Room {
       case "closed":
         this.handleHostGone();
         break;
-      case "roster":
+      case "roster": {
         this.events.onRoster?.(msg.players);
+        const me = this.self && msg.players.find((p) => p.id === this.self!.id);
+        if (me) {
+          this.self = me; // our car / color may have changed
+          this.events.onSelf?.(me);
+        }
         break;
+      }
       case "leaderboard":
         this.events.onLeaderboard?.(msg.leaderboard);
         break;

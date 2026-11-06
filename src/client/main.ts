@@ -5,10 +5,14 @@ import {
 } from "../sim";
 import { Room, type RemoteInputBatch } from "../net/room";
 import { restartWaitMs } from "../net/round";
-import { FREE_GAME, type GameMode, type GameState, type LeaderEntry, type PlayerInfo } from "../net/protocol";
+import {
+  DEFAULT_CAR, FREE_GAME, PALETTE, isCarModel,
+  type CarModel, type GameMode, type GameState, type LeaderEntry, type Look, type PlayerInfo,
+} from "../net/protocol";
 import { Keys } from "./input";
 import { advanceRemote, pose } from "./remote";
 import { mountLobby, mountRoomBar, type LobbyHandle } from "./net-ui";
+import { mountGarage } from "./garage";
 import {
   draw, type LeaderRow, type Particle, type Pose, type RaceRow, type RaceView, type RankRow, type RemoteCar, type Scene,
 } from "./render";
@@ -25,6 +29,21 @@ let track: TrackDef = soloTrack;
 const bestKey = () => `snowgo:best:${track.id}${track.kind === "grid" ? `:${track.hash}` : ""}:v${SIM_VERSION}`;
 const GHOST_KEY = "snowgo:ghost-on";
 const OTHERS_KEY = "snowgo:others-on";
+const CAR_KEY = "snowgo:car";
+const COLOR_KEY = "snowgo:color";
+
+/**
+ * The car and color we picked in the garage (remembered). Solo uses them as they are; a room starts from
+ * them, but there the host has the last word (our color may already belong to someone else).
+ */
+const myLook: { car: CarModel; color: string } = (() => {
+  let car: string | null = null, color: string | null = null;
+  try { car = localStorage.getItem(CAR_KEY); color = localStorage.getItem(COLOR_KEY); } catch { /* private mode */ }
+  return {
+    car: isCarModel(car) ? car : DEFAULT_CAR,
+    color: color && PALETTE.includes(color) ? color : PALETTE[0],
+  };
+})();
 
 const canvas = document.getElementById("game") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d")!;
@@ -319,7 +338,7 @@ function buildRank(): RankRow[] {
     });
   };
   if (self) push(self, car, true);
-  else push({ id: "me", name: "Você", color: "#e5412d", isHost: false }, car, true);
+  else push({ id: "me", name: "Você", color: myLook.color, car: myLook.car, isHost: false }, car, true);
   for (const r of remotes.values()) push(r.info, r.state, r.info.id === selfId);
   rows.sort((a, b) => b.key - a.key);
   return rows.map((r) => r.row);
@@ -462,6 +481,7 @@ function frame(now: number) {
       id: r.info.id,
       name: r.info.name,
       color: r.info.color,
+      car: isCarModel(r.info.car) ? r.info.car : DEFAULT_CAR,
       pose: lerpPose(r.prev, pose(r.state), remoteAlpha),
       air: r.state.airTicks,
     });
@@ -477,7 +497,8 @@ function frame(now: number) {
     bestText: best ? fmtSubticks(best.time) : "—",
     splits: fmtSplits(car.lapSubticks),
     newRecord, ghostOn,
-    selfColor: self?.color ?? "#e5412d",
+    selfColor: self?.color ?? myLook.color,
+    selfCar: self?.car ?? myLook.car,
     othersOn,
     remotes: remoteCars,
     rank: room ? buildRank() : [],
@@ -498,6 +519,12 @@ function frame(now: number) {
     canPickTrack: !room || room.isHost,
     restartInS: race && restartWaitNow(now) !== null ? Math.ceil(restartWaitNow(now)! / 1000) : null,
   });
+  garage.update({
+    car: scene.selfCar,
+    color: scene.selfColor,
+    taken: takenColors(),
+    inRoom: !!room && !!self,
+  });
 
   const dpr = window.devicePixelRatio || 1;
   const w = window.innerWidth, h = window.innerHeight;
@@ -517,7 +544,8 @@ function connect(mode: "host" | "join", code: string, name: string) {
   if (room) leaveRoom(); // never keep two rooms (e.g. retry while still connecting)
   const ref: { room: Room | null } = { room: null };
   const events = roomEvents(ref);
-  ref.room = mode === "host" ? Room.host(code, name, events, track) : Room.join(code, name, events, track);
+  const look: Look = { ...myLook };
+  ref.room = mode === "host" ? Room.host(code, name, events, track, look) : Room.join(code, name, events, track, look);
   room = ref.room;
 }
 
@@ -572,6 +600,28 @@ function setMode(mode: GameMode) {
   room?.setMode(mode);
 }
 
+// ── Garage: car model + color ────────────────────────────────
+
+/** Colors other players of the room already have (→ their name). Nothing is taken in solo. */
+function takenColors(): Record<string, string> {
+  const taken: Record<string, string> = {};
+  if (!room || !self) return taken;
+  for (const p of roster) if (p.id !== self.id) taken[p.color] = p.name;
+  return taken;
+}
+
+/** A pick in the garage: remembered for next time, and in a room sent to the host (which may refuse a taken color). */
+function pickLook(look: Look) {
+  if (look.color && takenColors()[look.color]) return;
+  if (isCarModel(look.car)) myLook.car = look.car;
+  if (look.color && PALETTE.includes(look.color)) myLook.color = look.color;
+  try {
+    localStorage.setItem(CAR_KEY, myLook.car);
+    localStorage.setItem(COLOR_KEY, myLook.color);
+  } catch { /* private mode */ }
+  room?.setLook(look);
+}
+
 // ── Background tabs ──────────────────────────────────────────
 // Browsers stop requestAnimationFrame in a hidden tab, which used to freeze our car for everyone
 // else (we stopped producing/sending ticks) and froze the world for us. Now the sim is driven by
@@ -615,8 +665,11 @@ lobby = mountLobby(
   ({ mode, code, name }) => connect(mode, code, name),
   () => { leaveRoom(); lobby.close(); }, // "Voltar ao solo" (also cancels a pending connection)
 );
+const garage = mountGarage(pickLook);
+keys.onToggleGarage = () => garage.toggle();
 const roomBar = mountRoomBar(
   {
+    onGarage: () => garage.open(),
     onMultiplayer: () => lobby.reopen(),
     onLeave: leaveRoom,
     onMode: setMode,

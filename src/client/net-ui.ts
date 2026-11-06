@@ -161,6 +161,7 @@ export interface RoomBarState {
 }
 
 export interface RoomBarActions {
+  onGarage: () => void;
   onMultiplayer: () => void;
   onLeave: () => void;
   onMode: (mode: GameMode) => void;
@@ -202,6 +203,7 @@ export function mountRoomBar(
       #roombar .seg button:last-child { border-radius: 0 10px 10px 0; border-left: 0; }
     </style>
     <select id="rb-track" title="Pista"></select>
+    <button id="rb-car" title="Escolher carro e cor (C)">Carro</button>
     <button id="rb-mp">Multiplayer</button>
     <span class="code" id="rb-code"></span>
     <span class="seg" id="rb-modes">
@@ -237,6 +239,7 @@ export function mountRoomBar(
       el.blur();
       fn();
     });
+  on($("rb-car"), actions.onGarage);
   on(mp, actions.onMultiplayer);
   on(leave, actions.onLeave);
   on(free, () => actions.onMode("free"));
