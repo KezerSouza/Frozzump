@@ -104,26 +104,66 @@ function stadium(ctx: CanvasRenderingContext2D, L: number, r: number) {
   ctx.roundRect(-(L + r), -r, 2 * (L + r), 2 * r, r);
 }
 
+/** Adds the outline of the road (outer wall + infield, or every loop of a grid track) to the current path. */
+function roadOutline(ctx: CanvasRenderingContext2D, t: TrackDef) {
+  if (t.kind === "stadium") {
+    const L = t.halfStraight, Ro = t.centerRadius + t.halfWidth, Ri = t.centerRadius - t.halfWidth;
+    stadium(ctx, L, Ro);
+    stadium(ctx, L, Ri);
+    return;
+  }
+  loopsPath(ctx, t.loops);
+}
+
+function loopsPath(ctx: CanvasRenderingContext2D, loops: number[][]) {
+  for (const lp of loops) {
+    ctx.moveTo(lp[0], lp[1]);
+    for (let n = 2; n < lp.length; n += 2) ctx.lineTo(lp[n], lp[n + 1]);
+    ctx.closePath();
+  }
+}
+
+/** Loops with the opposite orientation to the road's own are the walls' islands ("infield"). */
+function isIsland(lp: number[]): boolean {
+  let a = 0;
+  for (let n = 0; n < lp.length; n += 2) {
+    const m = (n + 2) % lp.length;
+    a += lp[n] * lp[m + 1] - lp[m] * lp[n + 1];
+  }
+  return a > 0; // (y grows downwards: a loop with the road inside has negative area)
+}
+
 export function draw(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: number, sc: Scene) {
   const t = sc.track;
-  const L = t.halfStraight, Ro = t.centerRadius + t.halfWidth, Ri = t.centerRadius - t.halfWidth;
 
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = C.bg;
   ctx.fillRect(0, 0, w, h);
 
-  // fixed camera showing the whole track (as in the original minigame)
-  const scale = Math.min(w / (2 * (L + Ro) + 4), h / (2 * Ro + 7));
-  const ox = w / 2, oy = h / 2 + 18; // screen position (CSS px) of the world origin
+  // fixed camera that fits the WHOLE track on screen (a big track simply zooms out)
+  const b = t.bounds;
+  const scale = Math.min(w / (b.x1 - b.x0 + 4), h / (b.y1 - b.y0 + 7));
+  const ox = w / 2 - ((b.x0 + b.x1) / 2) * scale; // screen position (CSS px) of the world origin
+  const oy = h / 2 + 18 - ((b.y0 + b.y1) / 2) * scale;
   ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * ox, dpr * oy);
 
   // track + infield
-  ctx.beginPath(); stadium(ctx, L, Ro); ctx.fillStyle = C.track; ctx.fill();
-  ctx.beginPath(); stadium(ctx, L, Ri); ctx.fillStyle = C.infield; ctx.fill();
+  if (t.kind === "stadium") {
+    const L = t.halfStraight, Ro = t.centerRadius + t.halfWidth, Ri = t.centerRadius - t.halfWidth;
+    ctx.beginPath(); stadium(ctx, L, Ro); ctx.fillStyle = C.track; ctx.fill();
+    ctx.beginPath(); stadium(ctx, L, Ri); ctx.fillStyle = C.infield; ctx.fill();
+  } else {
+    ctx.beginPath(); roadOutline(ctx, t); ctx.fillStyle = C.track; ctx.fill("evenodd");
+    ctx.fillStyle = C.infield;
+    for (const lp of t.loops) {
+      if (!isIsland(lp)) continue;
+      ctx.beginPath(); loopsPath(ctx, [lp]); ctx.fill();
+    }
+  }
 
   // deep snow and ramp (clipped to the track)
   ctx.save();
-  ctx.beginPath(); stadium(ctx, L, Ro); stadium(ctx, L, Ri); ctx.clip("evenodd");
+  ctx.beginPath(); roadOutline(ctx, t); ctx.clip("evenodd");
   for (const r of t.snow) {
     ctx.fillStyle = C.snow;
     ctx.fillRect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
@@ -138,25 +178,35 @@ export function draw(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: n
     ctx.fillStyle = C.ramp;
     ctx.fillRect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
     ctx.strokeStyle = C.rampDark; ctx.lineWidth = 0.12; ctx.lineJoin = "round";
-    const cy = (r.y0 + r.y1) / 2;
-    for (let i = 0; i < 2; i++) { // chevrons pointing in the race direction (←)
-      const cx = r.x1 - 0.3 - i * 0.35;
-      ctx.beginPath(); ctx.moveTo(cx + 0.18, cy - 0.45); ctx.lineTo(cx - 0.12, cy); ctx.lineTo(cx + 0.18, cy + 0.45); ctx.stroke();
+    ctx.save(); // two chevrons pointing in the race direction, drawn in a frame where +x is "forward"
+    ctx.translate((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2);
+    ctx.rotate(Math.atan2(r.dy, r.dx));
+    for (const u of [-0.2, 0.15]) {
+      ctx.beginPath(); ctx.moveTo(u - 0.18, -0.45); ctx.lineTo(u + 0.12, 0); ctx.lineTo(u - 0.18, 0.45); ctx.stroke();
     }
+    ctx.restore();
   }
   // start/finish line (checkered)
   const g = t.gates[0];
-  const sq = 0.5, n = Math.round((g.by - g.ay) / sq);
+  const sq = 0.5;
+  const vertical = g.ax === g.bx; // the line runs top-bottom (cars cross it left-right) or the other way round
+  const n = Math.round((vertical ? g.by - g.ay : g.bx - g.ax) / sq);
   for (let i = 0; i < n; i++) for (let j = 0; j < 2; j++) {
     ctx.fillStyle = (i + j) % 2 ? "#0c1624" : "#ffffff";
-    ctx.fillRect(g.ax - sq + j * sq, g.ay + i * sq, sq, sq);
+    if (vertical) ctx.fillRect(g.ax - sq + j * sq, g.ay + i * sq, sq, sq);
+    else ctx.fillRect(g.ax + i * sq, g.ay - sq + j * sq, sq, sq);
   }
   ctx.restore();
 
   // walls
-  ctx.strokeStyle = C.wall; ctx.lineWidth = 0.3;
-  ctx.beginPath(); stadium(ctx, L, Ro); ctx.stroke();
-  ctx.beginPath(); stadium(ctx, L, Ri); ctx.stroke();
+  ctx.strokeStyle = C.wall; ctx.lineWidth = 0.3; ctx.lineJoin = "round";
+  if (t.kind === "stadium") {
+    const L = t.halfStraight, Ro = t.centerRadius + t.halfWidth, Ri = t.centerRadius - t.halfWidth;
+    ctx.beginPath(); stadium(ctx, L, Ro); ctx.stroke();
+    ctx.beginPath(); stadium(ctx, L, Ri); ctx.stroke();
+  } else {
+    ctx.beginPath(); roadOutline(ctx, t); ctx.stroke();
+  }
 
   // snow particles
   for (const p of sc.particles) {
