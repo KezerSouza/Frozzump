@@ -5,11 +5,15 @@ import { TrackError, fnv1a, parseTrack } from "./grid";
 import { OVAL_1, type TrackDef } from "./track";
 import { BOOT } from "./tracks/boot";
 import { BOTTLENECK } from "./tracks/bottleneck";
+import { SERPENTINE } from "./tracks/serpentine";
+import { ZETA } from "./tracks/zeta";
 
 /** The drawings, as [id, text]. The id is what rooms and saved records use, so don't rename it later. */
 const DRAWINGS: [string, string][] = [
   ["bottleneck", BOTTLENECK],
   ["boot", BOOT],
+  ["serpentine", SERPENTINE],
+  ["zeta", ZETA],
 ];
 
 export const TRACKS: TrackDef[] = [OVAL_1];
