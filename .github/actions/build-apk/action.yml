@@ -1,0 +1,55 @@
+name: Build APK
+description: >
+  Builds the Android app from dist/ (run `npm run build` first) and copies it to the given path.
+  Signed release APK when the keystore is given, debug APK (with a warning) otherwise.
+inputs:
+  output:
+    description: where to copy the APK
+    required: true
+  keystore-base64:
+    description: secrets.ANDROID_KEYSTORE_BASE64
+    required: false
+  keystore-password:
+    description: secrets.ANDROID_KEYSTORE_PASSWORD
+    required: false
+  key-alias:
+    description: secrets.ANDROID_KEY_ALIAS
+    required: false
+  key-password:
+    description: secrets.ANDROID_KEY_PASSWORD
+    required: false
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: 21
+        cache: gradle
+    - name: Build APK
+      shell: bash
+      env:
+        KEYSTORE_BASE64: ${{ inputs.keystore-base64 }}
+        ANDROID_KEYSTORE_PASSWORD: ${{ inputs.keystore-password }}
+        ANDROID_KEY_ALIAS: ${{ inputs.key-alias }}
+        ANDROID_KEY_PASSWORD: ${{ inputs.key-password }}
+        OUTPUT: ${{ inputs.output }}
+      run: |
+        # versionCode = number of commits up to this one (needs the full history: checkout with fetch-depth 0).
+        # The same commit gets the same code in the Pages deploy and in the Release, and every later commit a
+        # bigger one, so any newer APK installs over an older one (Android refuses downgrades).
+        export APP_VERSION_CODE=$(git rev-list --count HEAD)
+        echo "versionCode $APP_VERSION_CODE"
+        OUTPUT=$(realpath -m "$OUTPUT")
+        npx cap sync android
+        cd android
+        if [ -n "$KEYSTORE_BASE64" ]; then
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          export ANDROID_KEYSTORE_FILE="$RUNNER_TEMP/release.jks"
+          ./gradlew assembleRelease --no-daemon
+          cp app/build/outputs/apk/release/app-release.apk "$OUTPUT"
+        else
+          echo "::warning::ANDROID_* secrets not set: publishing the debug APK, whose signature changes on every build (updating it means uninstalling the previous one first)."
+          ./gradlew assembleDebug --no-daemon
+          cp app/build/outputs/apk/debug/app-debug.apk "$OUTPUT"
+        fi

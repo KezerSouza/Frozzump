@@ -19,6 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the APK versionCode is the commit count
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -28,31 +30,13 @@ jobs:
       - run: npm run build
       # Android app (APK), published next to the site: <pages>/frozzump.apk — always the same version as the site,
       # so whoever installs it can play in the rooms of whoever is on the web.
-      - uses: actions/setup-java@v4
+      - uses: ./.github/actions/build-apk
         with:
-          distribution: temurin
-          java-version: 21
-          cache: gradle
-      - name: Build APK
-        env:
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          APP_VERSION_CODE: ${{ github.run_number }}
-        run: |
-          npx cap sync android
-          cd android
-          if [ -n "$KEYSTORE_BASE64" ]; then
-            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
-            export ANDROID_KEYSTORE_FILE="$RUNNER_TEMP/release.jks"
-            ./gradlew assembleRelease --no-daemon
-            cp app/build/outputs/apk/release/app-release.apk ../dist/frozzump.apk
-          else
-            echo "::warning::Secrets ANDROID_* não configurados: publicando o APK de debug, cuja assinatura muda a cada build (para atualizar, é preciso desinstalar o anterior)."
-            ./gradlew assembleDebug --no-daemon
-            cp app/build/outputs/apk/debug/app-debug.apk ../dist/frozzump.apk
-          fi
+          output: dist/frozzump.apk
+          keystore-base64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          keystore-password: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          key-alias: ${{ secrets.ANDROID_KEY_ALIAS }}
+          key-password: ${{ secrets.ANDROID_KEY_PASSWORD }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
