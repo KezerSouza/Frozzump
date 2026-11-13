@@ -8,6 +8,12 @@
 // ─────────────────────────────────────────────────────────────
 
 import { MAX_NAME_LEN, makeRoomCode, type GameMode } from "../net/protocol";
+import { isNativeApp } from "./mobile";
+
+/** The Android app, published next to the site by the GitHub Pages workflow (.github/workflows/deploy.yml). */
+const APK_URL = "snowgo.apk";
+/** Offer the app download: built site (the APK only exists on GitHub Pages), Android browser, not already in the app. */
+const offerApk = () => import.meta.env.PROD && /Android/i.test(navigator.userAgent) && !isNativeApp();
 
 export interface LobbyResult {
   mode: "host" | "join";
@@ -65,6 +71,10 @@ export function mountLobby(onStart: (r: LobbyResult) => void, onCancel: () => vo
       #lobby .msg.err { color: #ff8a3d; }
       #lobby .msg.ok { color: #45d483; }
       #lobby .hint { margin-top: 10px; font-size: 12px; color: #6f879c; }
+      #lobby a.apk {
+        display: block; margin-top: 10px; text-align: center; font-size: 13px; font-weight: 600; color: #3da5ff;
+      }
+      #lobby a.apk[hidden] { display: none; }
       #lobby button.link {
         flex: none; display: block; width: 100%; margin-top: 12px; padding: 8px;
         background: transparent; color: #8aa3b8; font-weight: 500; text-decoration: underline;
@@ -104,6 +114,7 @@ export function mountLobby(onStart: (r: LobbyResult) => void, onCancel: () => vo
       <div class="msg" id="msg"></div>
       <div class="hint">Criar sala gera um código — compartilhe com os amigos. Entrar pede o código de uma sala existente.</div>
       <button class="link" id="solo">Voltar ao solo</button>
+      <a class="apk" id="apk" href="${APK_URL}" download hidden>Baixar o app para Android</a>
     </div>
   `;
   document.body.appendChild(root);
@@ -114,6 +125,7 @@ export function mountLobby(onStart: (r: LobbyResult) => void, onCancel: () => vo
   const joinBtn = root.querySelector<HTMLButtonElement>("#join")!;
   const msgEl = root.querySelector<HTMLDivElement>("#msg")!;
   const soloBtn = root.querySelector<HTMLButtonElement>("#solo")!;
+  root.querySelector<HTMLAnchorElement>("#apk")!.hidden = !offerApk();
 
   nameEl.value = (localStorage.getItem(NAME_KEY) ?? "").slice(0, MAX_NAME_LEN);
   codeEl.value = makeRoomCode();

@@ -26,6 +26,26 @@ room, and any of them can create the room or join someone else's.
 
 ## Android app (APK)
 
+**Download**: every deploy to GitHub Pages also builds the app and publishes it next to the site, at
+`https://<user>.github.io/<repo>/snowgo.apk` (the multiplayer lobby shows a "Baixar o app para Android" link to it on
+Android browsers). It is always the same version as the site, so the app and the web play in the same rooms.
+
+The published APK is signed with the project's key, kept in the repository secrets: only an APK signed with the same
+key installs over the previous one. Settings → Secrets and variables → Actions → New repository secret:
+
+| secret | value |
+|---|---|
+| `ANDROID_KEYSTORE_BASE64` | the keystore (`.jks`) in base64: `base64 -w0 release.jks` |
+| `ANDROID_KEYSTORE_PASSWORD` | the keystore password |
+| `ANDROID_KEY_ALIAS` | the key alias |
+| `ANDROID_KEY_PASSWORD` | the key password |
+
+Without them the workflow publishes the debug APK instead (with a warning): it works, but its signature changes on every
+build, so updating means uninstalling the previous one first. Keep a backup of the keystore: lose it and the app can't be
+updated anymore, only uninstalled and installed again. Never commit it.
+
+**Building it yourself**:
+
 The `android/` folder is a [Capacitor](https://capacitorjs.com) project: the web build (`dist/`) inside a WebView,
 locked to landscape (`AndroidManifest.xml`) and fullscreen (`MainActivity.java`). Needs the Android SDK and Java 21:
 
