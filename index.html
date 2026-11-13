@@ -2,11 +2,22 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Snow Go — prototype</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#0c1624" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icon-192.png" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+    <title>Frozzump</title>
     <style>
       html, body { margin: 0; height: 100%; background: #0c1624; overflow: hidden; }
-      canvas { display: block; width: 100vw; height: 100vh; }
+      body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+      /* touch-action: none → fingers on the track steer instead of scrolling / zooming the page */
+      /* dvh: on a phone browser 100vh is taller than the visible area while the address bar shows (the bottom got cut) */
+      canvas { display: block; width: 100vw; height: 100vh; height: 100dvh; touch-action: none; }
+      input { -webkit-user-select: text; user-select: text; }
     </style>
   </head>
   <body>

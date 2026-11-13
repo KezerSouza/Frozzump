@@ -1,3 +1,4 @@
+import "./legacy-storage"; // must stay first: renames saved data before other modules read it
 import {
   BROKEN_TRACKS, DEFAULT_TRACK_ID, DT, SIM_VERSION, SUBTICKS_PER_TICK, TICK_RATE, TRACKS,
   createState, decodeReplay, encodeReplay, fromBase64, getTrack, step, toBase64, trackHash,
@@ -9,15 +10,16 @@ import {
   DEFAULT_CAR, FREE_GAME, PALETTE, isCarModel,
   type CarModel, type GameMode, type GameState, type LeaderEntry, type Look, type PlayerInfo,
 } from "../net/protocol";
-import { Keys } from "./input";
+import { Keys, isTouchDevice } from "./input";
+import { safeArea, setupMobile } from "./mobile";
 import { advanceRemote, pose } from "./remote";
 import { mountLobby, mountRoomBar, type LobbyHandle } from "./net-ui";
 import { mountGarage } from "./garage";
 import {
-  draw, type LeaderRow, type Particle, type Pose, type RaceRow, type RaceView, type RankRow, type RemoteCar, type Scene,
+  draw, timerBox, type LeaderRow, type Particle, type Pose, type RaceRow, type RaceView, type RankRow, type RemoteCar, type Scene,
 } from "./render";
 
-const SOLO_TRACK_KEY = "snowgo:track";
+const SOLO_TRACK_KEY = "frozzump:track";
 // In solo everybody picks their own track (remembered); in a room the host's choice rules while we are in it.
 let soloTrack: TrackDef = getTrack(localStorage.getItem(SOLO_TRACK_KEY) ?? "") ?? getTrack(DEFAULT_TRACK_ID)!;
 let track: TrackDef = soloTrack;
@@ -26,11 +28,12 @@ let track: TrackDef = soloTrack;
  * hash of the drawing is part of the key too: edit the drawing and its records start fresh (an old
  * ghost would drive through the new walls). The oval's key is unchanged, so its records survive.
  */
-const bestKey = () => `snowgo:best:${track.id}${track.kind === "grid" ? `:${track.hash}` : ""}:v${SIM_VERSION}`;
-const GHOST_KEY = "snowgo:ghost-on";
-const OTHERS_KEY = "snowgo:others-on";
-const CAR_KEY = "snowgo:car";
-const COLOR_KEY = "snowgo:color";
+const bestKey = () => `frozzump:best:${track.id}${track.kind === "grid" ? `:${track.hash}` : ""}:v${SIM_VERSION}`;
+const GHOST_KEY = "frozzump:ghost-on";
+const OTHERS_KEY = "frozzump:others-on";
+const FPS_KEY = "frozzump:fps-on";
+const CAR_KEY = "frozzump:car";
+const COLOR_KEY = "frozzump:color";
 
 /**
  * The car and color we picked in the garage (remembered). Solo uses them as they are; a room starts from
@@ -46,8 +49,35 @@ const myLook: { car: CarModel; color: string } = (() => {
 })();
 
 const canvas = document.getElementById("game") as HTMLCanvasElement;
-const ctx = canvas.getContext("2d")!;
-const keys = new Keys();
+// opaque: every frame paints the whole background anyway, and the browser can skip blending the canvas with the page
+const ctx = canvas.getContext("2d", { alpha: false })!;
+const keys = new Keys(canvas); // fingers on the canvas steer (left half / right half)
+const touch = isTouchDevice();
+/**
+ * Canvas resolution. A desktop uses the screen's own density. A phone starts at its own too (up to 3x) and steps down
+ * only if it can't keep up: filling ~2.6 million pixels per frame is what costs there (the JS is under 5% of a frame).
+ * "Keeping up" = drawing at least 85% of the best rate this screen has shown (60, 90, 120 Hz… or 30 in battery saver,
+ * which must not be read as slowness), measured while racing, for 2 s in a row.
+ */
+const DPR_STEPS = [3, 2.5, 2, 1.75, 1.5, 1.25];
+let dprCap = touch ? DPR_STEPS[0] : Infinity;
+let bestFps = 0; // highest rate seen on this screen (≈ its refresh rate)
+let slowWindows = 0; // consecutive half-second windows below 85% of it
+const canvasDpr = () => Math.min(window.devicePixelRatio || 1, dprCap);
+
+/** Called every half second with the measured rate: lowers the phone's canvas resolution one step if it lags. */
+function adaptResolution(rate: number) {
+  if (!touch || away) return;
+  bestFps = Math.max(bestFps, rate);
+  slowWindows = phase === "racing" && rate < bestFps * 0.85 ? slowWindows + 1 : 0;
+  if (slowWindows < 4) return;
+  slowWindows = 0;
+  const next = DPR_STEPS.find((d) => d < canvasDpr() - 0.01);
+  if (next === undefined) return; // already at the lowest step
+  dprCap = next;
+  console.info(`Frozzump: ${rate} fps de ${bestFps} → resolução do canvas ${next}x`);
+}
+setupMobile();
 
 type Phase = "countdown" | "racing" | "finished" | "waiting"; // waiting = race mode, joined mid-round
 interface Best { time: number; replay: string } // time in subticks (= finishSubticks)
@@ -63,8 +93,12 @@ let inputs: number[] = [];
 let particles: Particle[] = [];
 let best: Best | null = loadBest();
 let newRecord = false;
+let finishedAt = 0; // performance.now() when our run ended (tap-to-restart ignores the first moment)
 let ghostOn = localStorage.getItem(GHOST_KEY) !== "0";
 let othersOn = localStorage.getItem(OTHERS_KEY) !== "0";
+// FPS counter (off by default): frames drawn per second, averaged over half-second windows
+let fpsOn = localStorage.getItem(FPS_KEY) === "1";
+let fps = 0, fpsFrames = 0, fpsSince = performance.now();
 let acc = 0; // our own sim: wall-clock time not yet turned into ticks
 let remoteAcc = 0; // same for the remote cars (they run on wall-clock time too, independent of our phase)
 let last = performance.now();
@@ -154,6 +188,7 @@ function reset(next: "countdown" | "waiting" = "countdown") {
 
 function onFinish() {
   phase = "finished";
+  finishedAt = performance.now();
   const replay = toBase64(encodeReplay(inputs));
   if (!best || car.finishSubticks < best.time) {
     best = { time: car.finishSubticks, replay };
@@ -173,10 +208,34 @@ keys.onRestart = () => {
   }
   reset();
 };
+// Touch screens: once the final time is shown, a tap anywhere on the track races again (the R key on a computer).
+// Only a NEW tap, a moment after the finish: the finger that was steering across the line doesn't count.
+// Not in race mode: there rounds restart for everyone together, by the host (as with R).
+canvas.addEventListener("pointerdown", (e) => {
+  if (e.pointerType === "mouse") return;
+  if (onTimer(e.clientX, e.clientY)) return; // that tap toggles the FPS counter
+  if (phase === "finished" && !inRace() && performance.now() - finishedAt > 600) reset();
+});
+
 keys.onToggleGhost = () => {
   ghostOn = !ghostOn;
   localStorage.setItem(GHOST_KEY, ghostOn ? "1" : "0");
 };
+keys.onToggleFps = () => {
+  fpsOn = !fpsOn;
+  try { localStorage.setItem(FPS_KEY, fpsOn ? "1" : "0"); } catch { /* private mode */ }
+};
+/** Is this screen point on the timer (top left)? On a touch screen a tap there toggles the FPS counter. */
+function onTimer(x: number, y: number): boolean {
+  const b = timerBox(window.innerWidth, safeArea.left);
+  return x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1;
+}
+keys.onHudTouch = (x, y) => {
+  if (!onTimer(x, y)) return false;
+  keys.onToggleFps();
+  return true;
+};
+
 keys.onToggleOthers = () => {
   othersOn = !othersOn;
   localStorage.setItem(OTHERS_KEY, othersOn ? "1" : "0");
@@ -461,6 +520,13 @@ function pump(now: number): number {
 }
 
 function frame(now: number) {
+  fpsFrames++;
+  if (now - fpsSince >= 500) {
+    fps = Math.round((fpsFrames * 1000) / (now - fpsSince));
+    fpsFrames = 0;
+    fpsSince = now;
+    adaptResolution(fps);
+  }
   const dt = Math.min(0.1, pump(now)); // (the clamp is only for the cosmetic particles below)
 
   if (phase === "racing") spawnSnow(car);
@@ -508,6 +574,11 @@ function frame(now: number) {
     modeText: room ? (race ? `corrida ${game.round}` : "modo livre") : null,
     restartKey: !race || (!!room?.isHost && restartWaitNow(now) === 0),
     race: buildRaceView(now),
+    touch,
+    safeLeft: safeArea.left,
+    safeRight: safeArea.right,
+    // with the canvas resolution once it isn't the screen's own (a phone that had to step down)
+    fpsText: fpsOn ? `${fps} fps${canvasDpr() < (window.devicePixelRatio || 1) ? ` · ${canvasDpr()}x` : ""}` : null,
   };
   roomBar.update({
     inRoom: !!room && !!self,
@@ -518,6 +589,7 @@ function frame(now: number) {
     trackId: track.id,
     canPickTrack: !room || room.isHost,
     restartInS: race && restartWaitNow(now) !== null ? Math.ceil(restartWaitNow(now)! / 1000) : null,
+    touch,
   });
   garage.update({
     car: scene.selfCar,
@@ -526,7 +598,7 @@ function frame(now: number) {
     inRoom: !!room && !!self,
   });
 
-  const dpr = window.devicePixelRatio || 1;
+  const dpr = canvasDpr();
   const w = window.innerWidth, h = window.innerHeight;
   if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
     canvas.width = Math.round(w * dpr);
@@ -674,6 +746,7 @@ const roomBar = mountRoomBar(
     onLeave: leaveRoom,
     onMode: setMode,
     onRestart: () => room?.restartRound(),
+    onAgain: () => keys.onRestart(), // touch screens have no R key
     onTrack: pickTrack,
   },
   [

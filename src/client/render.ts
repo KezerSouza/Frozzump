@@ -85,6 +85,20 @@ export interface Scene {
   modeText: string | null; // "modo livre" / "corrida 3" (only inside a room)
   restartKey: boolean; // whether R does something right now (footer hint)
   race: RaceView | null;
+  /** touch screen: steer by touching the left / right half (the footer and the "race again" hint change) */
+  touch: boolean;
+  /** CSS px the HUD keeps clear on each side: a phone's camera cutout (landscape: left or right edge) */
+  safeLeft: number;
+  safeRight: number;
+  /** "60 fps" while the counter is on (F, or tapping the timer on a touch screen), else null */
+  fpsText: string | null;
+}
+
+/** Screen box (CSS px) of the timer + lap lines at the top left: on a touch screen, tapping it toggles the FPS counter. */
+export function timerBox(w: number, safeLeft: number): { x0: number; y0: number; x1: number; y1: number } {
+  const pad = Math.max(16, w * 0.02);
+  const fs = Math.round(Math.min(44, w * 0.04));
+  return { x0: 0, y0: 0, x1: pad + safeLeft + fs * 5.2 + 12, y1: pad + Math.min(52, w * 0.05) + 28 };
 }
 
 const C = {
@@ -139,18 +153,33 @@ function isIsland(lp: number[]): boolean {
   return a > 0; // (y grows downwards: a loop with the road inside has negative area)
 }
 
-export function draw(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: number, sc: Scene) {
-  const t = sc.track;
+/**
+ * The track never changes during a race, so it is drawn once into an offscreen canvas (background, road, snow, ramps,
+ * finish line, walls) and each frame only copies it: far less painting per frame, which is what costs on a phone
+ * (that's what lets the game run at the screen's full resolution there). Redrawn when the track or the size changes.
+ */
+let trackLayer: { track: TrackDef; key: string; canvas: HTMLCanvasElement } | null = null;
 
+function blitTrack(ctx: CanvasRenderingContext2D, t: TrackDef, w: number, h: number, dpr: number, scale: number, ox: number, oy: number) {
+  const pw = ctx.canvas.width, ph = ctx.canvas.height;
+  const key = `${pw}x${ph}|${w}x${h}|${dpr}`;
+  if (!trackLayer || trackLayer.track !== t || trackLayer.key !== key) {
+    const canvas = trackLayer?.canvas ?? document.createElement("canvas");
+    canvas.width = pw;
+    canvas.height = ph;
+    drawTrack(canvas.getContext("2d", { alpha: false })!, t, w, h, dpr, scale, ox, oy);
+    trackLayer = { track: t, key, canvas };
+  }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(trackLayer.canvas, 0, 0);
+}
+
+/** The static part of the scene (see blitTrack). */
+function drawTrack(ctx: CanvasRenderingContext2D, t: TrackDef, w: number, h: number, dpr: number, scale: number, ox: number, oy: number) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = C.bg;
   ctx.fillRect(0, 0, w, h);
 
-  // fixed camera that fits the WHOLE track on screen (a big track simply zooms out)
-  const b = t.bounds;
-  const scale = Math.min(w / (b.x1 - b.x0 + 4), h / (b.y1 - b.y0 + 7));
-  const ox = w / 2 - ((b.x0 + b.x1) / 2) * scale; // screen position (CSS px) of the world origin
-  const oy = h / 2 + 18 - ((b.y0 + b.y1) / 2) * scale;
   ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * ox, dpr * oy);
 
   // track + infield
@@ -213,6 +242,19 @@ export function draw(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: n
   } else {
     ctx.beginPath(); roadOutline(ctx, t); ctx.stroke();
   }
+
+}
+
+export function draw(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: number, sc: Scene) {
+  const t = sc.track;
+
+  // fixed camera that fits the WHOLE track on screen (a big track simply zooms out)
+  const b = t.bounds;
+  const scale = Math.min(w / (b.x1 - b.x0 + 4), h / (b.y1 - b.y0 + 7));
+  const ox = w / 2 - ((b.x0 + b.x1) / 2) * scale; // screen position (CSS px) of the world origin
+  const oy = h / 2 + 18 - ((b.y0 + b.y1) / 2) * scale;
+  blitTrack(ctx, t, w, h, dpr, scale, ox, oy);
+  ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * ox, dpr * oy);
 
   // snow particles
   for (const p of sc.particles) {
@@ -292,35 +334,50 @@ function drawCar(ctx: CanvasRenderingContext2D, p: Pose, air: number, style: Car
 function drawHud(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: number, sc: Scene) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const pad = Math.max(16, w * 0.02);
+  // the side texts stay clear of a camera cutout (the canvas itself runs under it, edge to edge)
+  const padL = pad + sc.safeLeft, padR = pad + sc.safeRight;
 
   ctx.textBaseline = "top"; ctx.textAlign = "left";
   ctx.fillStyle = C.text; ctx.font = `600 ${Math.round(Math.min(44, w * 0.04))}px ${MONO}`;
-  ctx.fillText(sc.timeText, pad, pad);
+  ctx.fillText(sc.timeText, padL, pad);
   const baseFs = Math.min(16, w * 0.016);
   ctx.fillStyle = C.muted; ctx.font = `500 ${Math.round(baseFs * UI_SCALE)}px ${SANS}`;
   const lap = Math.min(sc.state.laps + 1, sc.track.laps);
-  ctx.fillText(`Lap ${lap} of ${sc.track.laps}`, pad, pad + Math.min(52, w * 0.05));
+  ctx.fillText(`Lap ${lap} of ${sc.track.laps}`, padL, pad + Math.min(52, w * 0.05));
 
   ctx.textAlign = "right";
-  ctx.fillText(`Best ${sc.bestText}`, w - pad, pad + 6);
+  ctx.fillText(`Best ${sc.bestText}`, w - padR, pad + 6);
   // the personal splits keep their size; they start below the (bigger) Best line
   const splitsTop = pad + 6 + Math.round(baseFs * UI_SCALE * 1.25) + 6;
   ctx.font = `500 ${Math.round(baseFs)}px ${SANS}`;
-  sc.splits.forEach((s, i) => ctx.fillText(`${i + 1}  ${s}`, w - pad, splitsTop + i * 20));
+  sc.splits.forEach((s, i) => ctx.fillText(`${i + 1}  ${s}`, w - padR, splitsTop + i * 20));
 
   // shared lap-time leaderboard (top-right, below personal splits)
-  drawLeaderboard(ctx, w, splitsTop + sc.splits.length * 20, sc);
+  drawLeaderboard(ctx, w - padR, splitsTop + sc.splits.length * 20, sc);
   // connected-players rank (left side)
-  drawRank(ctx, pad, sc, pad + Math.min(52, w * 0.05) + Math.round(baseFs * UI_SCALE * 1.25));
+  drawRank(ctx, padL, pad, sc, pad + Math.min(52, w * 0.05) + Math.round(baseFs * UI_SCALE * 1.25));
 
   ctx.textAlign = "center"; ctx.textBaseline = "bottom"; ctx.fillStyle = C.muted;
   ctx.font = `500 ${Math.round(Math.min(15, w * 0.015) * UI_SCALE)}px ${SANS}`;
-  const room = sc.roomCode ? `   room ${sc.roomCode}${sc.modeText ? ` · ${sc.modeText}` : ""}` : "   M multiplayer";
-  const restart = sc.restartKey ? "   R restart" : "";
-  ctx.fillText(`← → steer${restart}   G ghost ${sc.ghostOn ? "on" : "off"}   O others ${sc.othersOn ? "on" : "off"}   C car${room}`, w / 2, h - pad * 0.8);
+  if (sc.touch) {
+    ctx.font = `500 ${Math.round(Math.max(12, Math.min(15, w * 0.015)))}px ${SANS}`;
+    const room = sc.roomCode ? `   sala ${sc.roomCode}${sc.modeText ? ` · ${sc.modeText}` : ""}` : "";
+    ctx.fillText(`toque à esquerda / direita para virar${room}`, w / 2, h - pad * 0.6, w * 0.6);
+  } else {
+    const room = sc.roomCode ? `   room ${sc.roomCode}${sc.modeText ? ` · ${sc.modeText}` : ""}` : "   M multiplayer";
+    const restart = sc.restartKey ? "   R restart" : "";
+    ctx.fillText(`← → steer${restart}   G ghost ${sc.ghostOn ? "on" : "off"}   O others ${sc.othersOn ? "on" : "off"}   C car   F fps${room}`, w / 2, h - pad * 0.8);
+  }
+  if (sc.fpsText) {
+    ctx.save(); // own text settings: the panels below rely on the centered alignment
+    ctx.textAlign = "left"; ctx.textBaseline = "bottom"; ctx.fillStyle = C.muted;
+    ctx.font = `600 ${Math.round(Math.max(12, Math.min(15, w * 0.015)))}px ${MONO}`;
+    ctx.fillText(sc.fpsText, padL, h - pad * 0.6);
+    ctx.restore();
+  }
 
   if (sc.phase === "countdown" && sc.countdownText) {
-    ctx.textBaseline = "middle"; ctx.fillStyle = C.text;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = C.text;
     ctx.font = `700 ${Math.round(Math.min(140, w * 0.14))}px ${SANS}`;
     ctx.fillText(sc.countdownText, w / 2, h * 0.42);
   }
@@ -330,12 +387,12 @@ function drawHud(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: numbe
   } else if (sc.phase === "finished") {
     const bw = Math.min(420, w - 32), bh = 170, bx = (w - bw) / 2, by = h * 0.3;
     ctx.fillStyle = "rgba(12,22,36,0.92)"; ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 14); ctx.fill();
-    ctx.textBaseline = "top"; ctx.fillStyle = C.text;
+    ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.fillStyle = C.text;
     ctx.font = `600 54px ${MONO}`; ctx.fillText(sc.timeText, w / 2, by + 22);
     ctx.fillStyle = sc.newRecord ? C.ramp : C.muted; ctx.font = `600 18px ${SANS}`;
     ctx.fillText(sc.newRecord ? "New record!" : `Your best: ${sc.bestText}`, w / 2, by + 92);
     ctx.fillStyle = C.muted; ctx.font = `500 15px ${SANS}`;
-    ctx.fillText("Press R to race again", w / 2, by + 126);
+    ctx.fillText(sc.touch ? "Toque na tela para correr de novo" : "Press R to race again", w / 2, by + 126, bw - 24);
   }
 }
 
@@ -401,9 +458,8 @@ function drawRacePanel(ctx: CanvasRenderingContext2D, w: number, h: number, r: R
 }
 
 /** Connected-players rank (1..15) on the left side. */
-function drawRank(ctx: CanvasRenderingContext2D, pad: number, sc: Scene, lapBottom: number) {
+function drawRank(ctx: CanvasRenderingContext2D, x: number, pad: number, sc: Scene, lapBottom: number) {
   if (sc.rank.length === 0) return;
-  const x = pad;
   const top = Math.max(pad + 86, lapBottom + 20 * UI_SCALE + 4); // below the (bigger) "Lap x of y" line
   const rowH = 22 * UI_SCALE;
   const sw = 11 * UI_SCALE; // color swatch size
@@ -428,9 +484,9 @@ function drawRank(ctx: CanvasRenderingContext2D, pad: number, sc: Scene, lapBott
 }
 
 /** Shared lap-time leaderboard (best times), top-right under the splits. */
-function drawLeaderboard(ctx: CanvasRenderingContext2D, w: number, splitsBottom: number, sc: Scene) {
+/** `x`: right edge of the board (CSS px). */
+function drawLeaderboard(ctx: CanvasRenderingContext2D, x: number, splitsBottom: number, sc: Scene) {
   if (sc.leaderboard.length === 0) return;
-  const x = w - Math.max(16, w * 0.02);
   const top = splitsBottom + 26 + 8 * UI_SCALE;
   const rowH = 20 * UI_SCALE;
   const sw = 10 * UI_SCALE;

@@ -1,16 +1,18 @@
 {
-  "name": "snowgo-prototype",
+  "name": "frozzump",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "bot": "tsx tools/bot.ts"
+    "bot": "tsx tools/bot.ts",
+    "apk": "npm run build && cap sync android && cd android && ./gradlew assembleDebug"
   },
   "devDependencies": {
+    "@capacitor/cli": "^7.6.10",
     "@types/node": "^26.6.6",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
@@ -18,6 +20,8 @@
     "vitest": "^2.1.0"
   },
   "dependencies": {
+    "@capacitor/android": "^7.6.10",
+    "@capacitor/core": "^7.6.10",
     "peerjs": "^1.5.5"
   }
 }
