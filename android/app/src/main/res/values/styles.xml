@@ -14,7 +14,7 @@
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
         <!-- the game's dark blue instead of the theme's gray, wherever the window shows through -->
-        <item name="android:windowBackground">@color/snowgo_background</item>
+        <item name="android:windowBackground">@color/frozzump_background</item>
     </style>
 
 

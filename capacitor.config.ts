@@ -3,8 +3,8 @@ import type { CapacitorConfig } from "@capacitor/cli";
 // Android app: the same web build (dist/) inside a WebView, locked to landscape and fullscreen
 // (see android/app/src/main/AndroidManifest.xml and MainActivity.java). Build with `npm run apk`.
 const config: CapacitorConfig = {
-  appId: "io.github.kezersouza.snowgo",
-  appName: "Snow Go",
+  appId: "io.github.kezersouza.frozzump",
+  appName: "Frozzump",
   webDir: "dist",
   backgroundColor: "#0c1624",
   android: {

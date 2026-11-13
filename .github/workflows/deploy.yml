@@ -26,7 +26,7 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
-      # Android app (APK), published next to the site: <pages>/snowgo.apk — always the same version as the site,
+      # Android app (APK), published next to the site: <pages>/frozzump.apk — always the same version as the site,
       # so whoever installs it can play in the rooms of whoever is on the web.
       - uses: actions/setup-java@v4
         with:
@@ -47,11 +47,11 @@ jobs:
             echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
             export ANDROID_KEYSTORE_FILE="$RUNNER_TEMP/release.jks"
             ./gradlew assembleRelease --no-daemon
-            cp app/build/outputs/apk/release/app-release.apk ../dist/snowgo.apk
+            cp app/build/outputs/apk/release/app-release.apk ../dist/frozzump.apk
           else
             echo "::warning::Secrets ANDROID_* não configurados: publicando o APK de debug, cuja assinatura muda a cada build (para atualizar, é preciso desinstalar o anterior)."
             ./gradlew assembleDebug --no-daemon
-            cp app/build/outputs/apk/debug/app-debug.apk ../dist/snowgo.apk
+            cp app/build/outputs/apk/debug/app-debug.apk ../dist/frozzump.apk
           fi
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

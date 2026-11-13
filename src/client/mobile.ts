@@ -16,7 +16,7 @@ interface CapacitorGlobal { isNativePlatform?: () => boolean }
 export const isNativeApp = (): boolean =>
   !!(window as unknown as { Capacitor?: CapacitorGlobal }).Capacitor?.isNativePlatform?.();
 
-const DISMISS_KEY = "snowgo:portrait-ok";
+const DISMISS_KEY = "frozzump:portrait-ok";
 
 /** Fullscreen + landscape lock. Must run inside a user gesture. Resolves to false when the browser refuses. */
 async function goLandscape(): Promise<boolean> {
@@ -91,9 +91,9 @@ export function setupMobile() {
       }
       #rotate .phone {
         width: 54px; height: 92px; border: 4px solid #e8f1f7; border-radius: 12px;
-        animation: snowgo-rot 2.2s ease-in-out infinite;
+        animation: frozzump-rot 2.2s ease-in-out infinite;
       }
-      @keyframes snowgo-rot { 0%, 25% { transform: rotate(0); } 55%, 100% { transform: rotate(-90deg); } }
+      @keyframes frozzump-rot { 0%, 25% { transform: rotate(0); } 55%, 100% { transform: rotate(-90deg); } }
       #rotate h2 { margin: 0; font-size: 22px; }
       #rotate p { margin: 0; color: #8aa3b8; font-size: 15px; max-width: 320px; }
       #rotate button {
@@ -104,7 +104,7 @@ export function setupMobile() {
     </style>
     <div class="phone"></div>
     <h2>Gire o celular</h2>
-    <p>Snow Go é jogado na horizontal. Toque na metade esquerda da tela para virar à esquerda e na direita para virar à direita.</p>
+    <p>Frozzump é jogado na horizontal. Toque na metade esquerda da tela para virar à esquerda e na direita para virar à direita.</p>
     <button id="rot-go">Jogar na horizontal</button>
     <button class="link" id="rot-skip">Continuar na vertical</button>
   `;

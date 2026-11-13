@@ -1,10 +1,10 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace "io.github.kezersouza.snowgo"
+    namespace "io.github.kezersouza.frozzump"
     compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "io.github.kezersouza.snowgo"
+        applicationId "io.github.kezersouza.frozzump"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         // CI passes the run number, so every published APK is newer than the last one (Android refuses downgrades)

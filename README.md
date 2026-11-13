@@ -1,6 +1,6 @@
-# Snow Go — prototype
+# Frozzump
 
-Browser game inspired on the Snow Go minigame from Mario Party 9: an oval track, 5 laps,
+Browser game inspired on the "Snow Go" minigame from Mario Party 9: an oval track, 5 laps,
 deep snow that slows you down, and a ramp that jumps you over it.
 Controls: ← → (or A/D) to steer, `R` to restart, `G` toggles your personal ghost,
 `O` toggles the other players' shadows, `C` picks your car and color, `M` opens the multiplayer lobby,
@@ -27,7 +27,7 @@ room, and any of them can create the room or join someone else's.
 ## Android app (APK)
 
 **Download**: every deploy to GitHub Pages also builds the app and publishes it next to the site, at
-`https://<user>.github.io/<repo>/snowgo.apk` (the multiplayer lobby shows a "Baixar o app para Android" link to it on
+`https://<user>.github.io/<repo>/frozzump.apk` (the multiplayer lobby shows a "Baixar o app para Android" link to it on
 Android browsers). It is always the same version as the site, so the app and the web play in the same rooms.
 
 The published APK is signed with the project's key, kept in the repository secrets: only an APK signed with the same

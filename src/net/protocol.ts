@@ -233,7 +233,7 @@ export const PALETTE: string[] = [
 export const MAX_PLAYERS = PALETTE.length; // 15
 
 /** PeerJS id namespace for room codes → avoids collisions on the public broker. */
-export const ROOM_PREFIX = "snowgo-room-";
+export const ROOM_PREFIX = "frozzump-room-";
 
 /** Human-friendly room code (what the user types) → full PeerJS id. */
 export function codeToPeerId(code: string): string {

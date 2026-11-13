@@ -1,3 +1,4 @@
+import "./legacy-storage"; // must stay first: renames saved data before other modules read it
 import {
   BROKEN_TRACKS, DEFAULT_TRACK_ID, DT, SIM_VERSION, SUBTICKS_PER_TICK, TICK_RATE, TRACKS,
   createState, decodeReplay, encodeReplay, fromBase64, getTrack, step, toBase64, trackHash,
@@ -18,7 +19,7 @@ import {
   draw, timerBox, type LeaderRow, type Particle, type Pose, type RaceRow, type RaceView, type RankRow, type RemoteCar, type Scene,
 } from "./render";
 
-const SOLO_TRACK_KEY = "snowgo:track";
+const SOLO_TRACK_KEY = "frozzump:track";
 // In solo everybody picks their own track (remembered); in a room the host's choice rules while we are in it.
 let soloTrack: TrackDef = getTrack(localStorage.getItem(SOLO_TRACK_KEY) ?? "") ?? getTrack(DEFAULT_TRACK_ID)!;
 let track: TrackDef = soloTrack;
@@ -27,12 +28,12 @@ let track: TrackDef = soloTrack;
  * hash of the drawing is part of the key too: edit the drawing and its records start fresh (an old
  * ghost would drive through the new walls). The oval's key is unchanged, so its records survive.
  */
-const bestKey = () => `snowgo:best:${track.id}${track.kind === "grid" ? `:${track.hash}` : ""}:v${SIM_VERSION}`;
-const GHOST_KEY = "snowgo:ghost-on";
-const OTHERS_KEY = "snowgo:others-on";
-const FPS_KEY = "snowgo:fps-on";
-const CAR_KEY = "snowgo:car";
-const COLOR_KEY = "snowgo:color";
+const bestKey = () => `frozzump:best:${track.id}${track.kind === "grid" ? `:${track.hash}` : ""}:v${SIM_VERSION}`;
+const GHOST_KEY = "frozzump:ghost-on";
+const OTHERS_KEY = "frozzump:others-on";
+const FPS_KEY = "frozzump:fps-on";
+const CAR_KEY = "frozzump:car";
+const COLOR_KEY = "frozzump:color";
 
 /**
  * The car and color we picked in the garage (remembered). Solo uses them as they are; a room starts from
@@ -74,7 +75,7 @@ function adaptResolution(rate: number) {
   const next = DPR_STEPS.find((d) => d < canvasDpr() - 0.01);
   if (next === undefined) return; // already at the lowest step
   dprCap = next;
-  console.info(`Snow Go: ${rate} fps de ${bestFps} → resolução do canvas ${next}x`);
+  console.info(`Frozzump: ${rate} fps de ${bestFps} → resolução do canvas ${next}x`);
 }
 setupMobile();
 

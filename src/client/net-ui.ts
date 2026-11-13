@@ -11,7 +11,7 @@ import { MAX_NAME_LEN, makeRoomCode, type GameMode } from "../net/protocol";
 import { isNativeApp } from "./mobile";
 
 /** The Android app, published next to the site by the GitHub Pages workflow (.github/workflows/deploy.yml). */
-const APK_URL = "snowgo.apk";
+const APK_URL = "frozzump.apk";
 /** Offer the app download: built site (the APK only exists on GitHub Pages), Android browser, not already in the app. */
 const offerApk = () => import.meta.env.PROD && /Android/i.test(navigator.userAgent) && !isNativeApp();
 
@@ -21,7 +21,7 @@ export interface LobbyResult {
   name: string;
 }
 
-const NAME_KEY = "snowgo:name";
+const NAME_KEY = "frozzump:name";
 
 export interface LobbyHandle {
   /** Show a transient error inside the lobby (e.g. room full). */
@@ -93,7 +93,7 @@ export function mountLobby(onStart: (r: LobbyResult) => void, onCancel: () => vo
       }
     </style>
     <div class="card">
-      <h1>Snow Go — multiplayer</h1>
+      <h1>Frozzump — multiplayer</h1>
       <p class="sub">Até 15 jogadores na mesma pista, P2P (WebRTC).</p>
 
       <div class="fields">
