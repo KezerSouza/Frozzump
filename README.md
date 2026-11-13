@@ -3,8 +3,40 @@
 Browser game inspired on the Snow Go minigame from Mario Party 9: an oval track, 5 laps,
 deep snow that slows you down, and a ramp that jumps you over it.
 Controls: ← → (or A/D) to steer, `R` to restart, `G` toggles your personal ghost,
-`O` toggles the other players' shadows, `C` picks your car and color, `M` opens the multiplayer lobby.
+`O` toggles the other players' shadows, `C` picks your car and color, `M` opens the multiplayer lobby,
+`F` toggles the FPS counter (bottom left; on a phone, tap the timer).
 The car accelerates on its own.
+
+## Phones and tablets
+
+On a touch screen, **touch the left half of the screen to steer left and the right half to steer right**
+(both at once = both keys held). Two arrows in the bottom corners light up while a finger holds that side.
+There is no keyboard, so a **↻** button in the top bar restarts your run (solo / free mode; races are restarted by
+the host as on desktop).
+
+The game is played in landscape:
+
+- **Mobile browser**: the first tap goes fullscreen and locks the screen to landscape (Chrome on Android). Where
+  the browser can't (iPhone Safari), a "Gire o celular" notice is shown while the phone is upright; it can be
+  dismissed to play upright anyway. Added to the home screen, the web manifest opens it fullscreen in landscape.
+- **Android app**: always landscape and fullscreen, and the screen stays on.
+
+Web (desktop or phone) and the Android app are the same game and the same protocol: they play together in the same
+room, and any of them can create the room or join someone else's.
+
+## Android app (APK)
+
+The `android/` folder is a [Capacitor](https://capacitorjs.com) project: the web build (`dist/`) inside a WebView,
+locked to landscape (`AndroidManifest.xml`) and fullscreen (`MainActivity.java`). Needs the Android SDK and Java 21:
+
+```bash
+export ANDROID_HOME=~/Android/Sdk
+npm run apk      # build + cap sync + gradle → android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+Copy the APK to the phone and open it (Android asks to allow installing from that source). The app carries its own
+copy of the game: after a change to the protocol, the sim or a track, build a new APK, or the host refuses it
+("Versão incompatível com o host" / "A pista da sala é diferente").
 
 ## Car and color
 
@@ -122,7 +154,9 @@ src/net/      P2P multiplayer (WebRTC via PeerJS)
   protocol.ts wire messages, game modes, color palette (15), room codes
   room.ts     star-topology room: host authority, presence, leaderboard
   round.ts    race-mode rounds (host): participants, standings, 20 s next-round timer
-src/client/   browser: fixed-step loop, keyboard, Canvas 2D, ghost, lobby UI
+src/client/   browser: fixed-step loop, keyboard + touch, Canvas 2D, ghost, lobby UI
+  mobile.ts   phones: landscape / fullscreen, "rotate your phone" notice, keep the screen awake
+android/      Android app (Capacitor) — `npm run apk`
 tests/        vitest (includes a "golden" determinism hash)
 tools/bot.ts  tuning bot (oval only)
 ```
