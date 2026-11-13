@@ -7,7 +7,7 @@ android {
         applicationId "io.github.kezersouza.frozzump"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        // CI passes the run number, so every published APK is newer than the last one (Android refuses downgrades)
+        // CI passes the commit count (.github/actions/build-apk), so every newer APK installs over an older one
         versionCode Integer.parseInt(System.getenv("APP_VERSION_CODE") ?: "1")
         // the version shown to the user comes from package.json (single source of truth, see README "Versions")
         versionName new groovy.json.JsonSlurper().parse(file("../../package.json")).version

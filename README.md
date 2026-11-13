@@ -1,5 +1,8 @@
 # Frozzump
 
+**Play:** https://kezersouza.github.io/Frozzump/ · **Android app:** [download the APK](https://github.com/KezerSouza/Frozzump/releases/latest/download/frozzump.apk)
+([all versions](https://github.com/KezerSouza/Frozzump/releases))
+
 Browser game inspired on the "Snow Go" minigame from Mario Party 9: an oval track, 5 laps,
 deep snow that slows you down, and a ramp that jumps you over it.
 Controls: ← → (or A/D) to steer, `R` to restart, `G` toggles your personal ghost,
@@ -26,9 +29,16 @@ room, and any of them can create the room or join someone else's.
 
 ## Android app (APK)
 
-**Download**: every deploy to GitHub Pages also builds the app and publishes it next to the site, at
-`https://<user>.github.io/<repo>/frozzump.apk` (the multiplayer lobby shows a "Baixar o app para Android" link to it on
-Android browsers). It is always the same version as the site, so the app and the web play in the same rooms.
+**Download**, in two places:
+
+- **GitHub Releases**: every version tag (`v1.0.0`, …) publishes a release with its APK and its CHANGELOG notes
+  (`.github/workflows/release.yml`). The newest one is always at
+  `https://github.com/<user>/<repo>/releases/latest/download/frozzump.apk`.
+- **Next to the site**: every deploy to GitHub Pages also builds the app and publishes it at
+  `https://<user>.github.io/<repo>/frozzump.apk` (the multiplayer lobby shows a "Baixar o app para Android" link to it on
+  Android browsers). It is always the same version as the site, so the app and the web play in the same rooms.
+
+Both workflows build it the same way (`.github/actions/build-apk`).
 
 The published APK is signed with the project's key, kept in the repository secrets: only an APK signed with the same
 key installs over the previous one. Settings → Secrets and variables → Actions → New repository secret:
@@ -62,8 +72,8 @@ copy of the game: after a change to the protocol, the sim or a track, build a ne
 
 The project follows [semantic versioning](https://semver.org) (`MAJOR.MINOR.PATCH`), starting at **1.0.0**.
 `package.json` is the single source of truth: the multiplayer lobby shows it (`v1.0.0`) and the APK uses it as its
-`versionName`. The APK's internal `versionCode` is the workflow run number, so every published APK installs over the
-previous one. Changes per version: [CHANGELOG.md](CHANGELOG.md).
+`versionName`. The APK's internal `versionCode` is the number of commits, so the same commit gets the same code on
+Pages and in the Release, and every newer APK installs over an older one. Changes per version: [CHANGELOG.md](CHANGELOG.md).
 
 To release a version:
 
@@ -71,8 +81,13 @@ To release a version:
 npm version minor --no-git-tag-version   # or patch (fixes) / major; updates package.json + package-lock.json
 # add the version to CHANGELOG.md, commit, open the PR and merge it into main (the deploy publishes site + APK)
 git checkout main && git pull
-git tag v1.1.0 && git push origin v1.1.0    # tag the merged commit
+git tag v1.1.0 && git push origin v1.1.0    # tag the merged commit → GitHub Release with the APK
 ```
+
+The release workflow refuses a tag that doesn't match `package.json` (`v1.1.0` ↔ `"version": "1.1.0"`).
+Instead of the terminal, the tag can be created on GitHub: Releases → "Draft a new release" → type the tag (`v1.1.0`)
+→ "Create new tag on publish", target `main` → Publish. The workflow then attaches the APK (and fills the notes from
+CHANGELOG.md if they were left empty).
 
 - **patch** (1.0.1): bug fixes. **minor** (1.1.0): new features (tracks, cars, modes…). **major** (2.0.0): big changes.
 - Players on different versions can still share a room as long as the protocol, the sim and the track are the same
@@ -215,8 +230,8 @@ tools/bot.ts  tuning bot (oval only)
 
 Thanks to everyone who has contributed to this project!
 
-<a href="https://github.com/KezerSouza/snowgo-prototype/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=KezerSouza/snowgo-prototype" alt="Contributors" />
+<a href="https://github.com/KezerSouza/Frozzump/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=KezerSouza/Frozzump" alt="Contributors" />
 </a>
 
 <sub>Avatars are generated automatically by <a href="https://contrib.rocks">contrib.rocks</a> from the repository's contributor list.</sub>

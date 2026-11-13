@@ -1,0 +1,70 @@
+name: Release
+
+# A version tag publishes a GitHub Release with the APK and that version's notes from CHANGELOG.md.
+# The tag can be pushed from a terminal (git tag v1.0.0 && git push origin v1.0.0) or created on GitHub in
+# Releases → "Draft a new release". It must match package.json's version.
+# Stable link to the newest APK: https://github.com/<owner>/<repo>/releases/latest/download/frozzump.apk
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ github.ref_name }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the APK versionCode is the commit count
+      - name: Tag matches package.json
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "$TAG" != "v$VERSION" ]; then
+            echo "::error::Tag $TAG doesn't match the package.json version (v$VERSION)."
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - uses: ./.github/actions/build-apk
+        with:
+          output: frozzump.apk
+          keystore-base64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          keystore-password: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          key-alias: ${{ secrets.ANDROID_KEY_ALIAS }}
+          key-password: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      - name: Release notes from CHANGELOG.md
+        run: |
+          # the "## [x.y.z]" section of this version, up to the next "## " heading
+          awk -v v="## [$VERSION]" 'index($0, v) == 1 { on = 1; next } on && /^## / { exit } on' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "::warning::CHANGELOG.md has no [$VERSION] section."
+            echo "Frozzump $VERSION" > notes.md
+          fi
+          cat notes.md
+      # The tag may come from a terminal push (no release yet: create it) or from the GitHub page
+      # "Draft a new release" (the release already exists: attach the APK, and fill the notes if left empty).
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" frozzump.apk --clobber
+            if [ -z "$(gh release view "$TAG" --json body -q .body)" ]; then
+              gh release edit "$TAG" --notes-file notes.md
+            fi
+          else
+            gh release create "$TAG" frozzump.apk --title "Frozzump $VERSION" --notes-file notes.md --verify-tag
+          fi
