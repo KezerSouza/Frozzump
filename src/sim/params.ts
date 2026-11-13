@@ -3,7 +3,8 @@
 // => bump SIM_VERSION (and the leaderboard becomes a new one).
 // ─────────────────────────────────────────────────────────────
 
-export const SIM_VERSION = 7;
+// Restarted at 1 in Frozzump 1.0.0 (same physics as Snow Go's SIM_VERSION 7); goes up from here.
+export const SIM_VERSION = 1;
 
 export const TICK_RATE = 120;
 export const DT = 1 / TICK_RATE;

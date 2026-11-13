@@ -9,7 +9,8 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         // CI passes the run number, so every published APK is newer than the last one (Android refuses downgrades)
         versionCode Integer.parseInt(System.getenv("APP_VERSION_CODE") ?: "1")
-        versionName "1.0"
+        // the version shown to the user comes from package.json (single source of truth, see README "Versions")
+        versionName new groovy.json.JsonSlurper().parse(file("../../package.json")).version
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

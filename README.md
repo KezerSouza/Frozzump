@@ -58,6 +58,26 @@ Copy the APK to the phone and open it (Android asks to allow installing from tha
 copy of the game: after a change to the protocol, the sim or a track, build a new APK, or the host refuses it
 ("Versão incompatível com o host" / "A pista da sala é diferente").
 
+## Versions
+
+The project follows [semantic versioning](https://semver.org) (`MAJOR.MINOR.PATCH`), starting at **1.0.0**.
+`package.json` is the single source of truth: the multiplayer lobby shows it (`v1.0.0`) and the APK uses it as its
+`versionName`. The APK's internal `versionCode` is the workflow run number, so every published APK installs over the
+previous one. Changes per version: [CHANGELOG.md](CHANGELOG.md).
+
+To release a version:
+
+```bash
+npm version minor --no-git-tag-version   # or patch (fixes) / major; updates package.json + package-lock.json
+# add the version to CHANGELOG.md, commit, open the PR and merge it into main (the deploy publishes site + APK)
+git checkout main && git pull
+git tag v1.1.0 && git push origin v1.1.0    # tag the merged commit
+```
+
+- **patch** (1.0.1): bug fixes. **minor** (1.1.0): new features (tracks, cars, modes…). **major** (2.0.0): big changes.
+- Players on different versions can still share a room as long as the protocol, the sim and the track are the same
+  (`PROTOCOL_VERSION` / `SIM_VERSION` / track hash, checked by the host); the app version itself isn't checked.
+
 ## Car and color
 
 The **Carro** button (top bar) or `C` opens the garage: three car models (Normal, Snowmobile, Bobsled)

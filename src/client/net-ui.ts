@@ -71,6 +71,7 @@ export function mountLobby(onStart: (r: LobbyResult) => void, onCancel: () => vo
       #lobby .msg.err { color: #ff8a3d; }
       #lobby .msg.ok { color: #45d483; }
       #lobby .hint { margin-top: 10px; font-size: 12px; color: #6f879c; }
+      #lobby h1 .ver { font-size: 12px; font-weight: 500; color: #6f879c; }
       #lobby a.apk {
         display: block; margin-top: 10px; text-align: center; font-size: 13px; font-weight: 600; color: #3da5ff;
       }
@@ -93,7 +94,7 @@ export function mountLobby(onStart: (r: LobbyResult) => void, onCancel: () => vo
       }
     </style>
     <div class="card">
-      <h1>Frozzump — multiplayer</h1>
+      <h1>Frozzump — multiplayer <span class="ver">v${__APP_VERSION__}</span></h1>
       <p class="sub">Até 15 jogadores na mesma pista, P2P (WebRTC).</p>
 
       <div class="fields">

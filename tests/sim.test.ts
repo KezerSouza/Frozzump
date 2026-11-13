@@ -186,6 +186,8 @@ describe("replay and determinism", () => {
   });
 });
 
+// SIM_VERSION=1 (Frozzump 1.0.0): numbering restarted, same physics and values as Snow Go's 7 below.
+// Before 1.0.0 ("Snow Go"):
 // SIM_VERSION=7: DRAG_SNOW 2.0 -> 2.5 (slower in the snow): 2837 -> 2840 ticks, finish at 186067473 subticks.
 // SIM_VERSION=6 (wall pivot: only changes runs that touch a wall; this golden run doesn't, so the values are the same as v5).
 // SIM_VERSION=5: times in subticks (1/65536 tick). Same 2837 ticks as v4 (stop criterion unchanged);
