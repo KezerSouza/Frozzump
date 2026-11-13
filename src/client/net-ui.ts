@@ -42,6 +42,7 @@ export function mountLobby(onStart: (r: LobbyResult) => void, onCancel: () => vo
       #lobby .card {
         width: min(380px, 90vw); background: #11223a; border: 1px solid #22405f;
         border-radius: 16px; padding: 24px; box-shadow: 0 18px 60px rgba(0,0,0,0.45);
+        max-height: 94vh; max-height: 94dvh; overflow-y: auto; box-sizing: border-box;
       }
       #lobby h1 { margin: 0 0 4px; font-size: 22px; }
       #lobby p.sub { margin: 0 0 18px; color: #8aa3b8; font-size: 13px; }
@@ -68,16 +69,33 @@ export function mountLobby(onStart: (r: LobbyResult) => void, onCancel: () => vo
         flex: none; display: block; width: 100%; margin-top: 12px; padding: 8px;
         background: transparent; color: #8aa3b8; font-weight: 500; text-decoration: underline;
       }
+      /* phone in landscape: little height, so a tighter card in two columns */
+      @media (max-height: 500px) {
+        #lobby .card { width: min(560px, 94vw); padding: 14px 18px; }
+        #lobby h1 { font-size: 18px; }
+        #lobby p.sub { margin-bottom: 4px; }
+        #lobby .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+        #lobby label { margin: 8px 0 4px; }
+        #lobby .row { margin-top: 12px; }
+        #lobby .msg { margin-top: 8px; }
+        #lobby .hint { display: none; }
+        #lobby button.link { margin-top: 4px; padding: 4px; }
+      }
     </style>
     <div class="card">
       <h1>Snow Go — multiplayer</h1>
       <p class="sub">Até 15 jogadores na mesma pista, P2P (WebRTC).</p>
 
-      <label for="name">Seu apelido</label>
-      <input id="name" maxlength="${MAX_NAME_LEN}" placeholder="Ex.: Nina" autocomplete="off" />
-
-      <label for="code">Código da sala</label>
-      <input id="code" maxlength="6" placeholder="ABCD" autocomplete="off" />
+      <div class="fields">
+        <div>
+          <label for="name">Seu apelido</label>
+          <input id="name" maxlength="${MAX_NAME_LEN}" placeholder="Ex.: Nina" autocomplete="off" />
+        </div>
+        <div>
+          <label for="code">Código da sala</label>
+          <input id="code" maxlength="6" placeholder="ABCD" autocomplete="off" autocapitalize="characters" />
+        </div>
+      </div>
 
       <div class="row">
         <button class="primary" id="host">Criar sala</button>
@@ -141,6 +159,8 @@ export function mountLobby(onStart: (r: LobbyResult) => void, onCancel: () => vo
     reopen: () => {
       setBusy(false);
       root.style.display = "flex";
+      // on a phone, focusing would pop the on-screen keyboard over half of the (landscape) screen
+      if (window.matchMedia("(pointer: coarse)").matches) return;
       if (!nameEl.value) nameEl.focus();
       else codeEl.focus();
     },
@@ -158,6 +178,8 @@ export interface RoomBarState {
   canPickTrack: boolean;
   /** seconds until restarting is allowed, once someone finished (null: nobody has finished yet) */
   restartInS: number | null;
+  /** touch screen: show a restart button for solo / free mode (there's no R key) */
+  touch: boolean;
 }
 
 export interface RoomBarActions {
@@ -166,6 +188,8 @@ export interface RoomBarActions {
   onLeave: () => void;
   onMode: (mode: GameMode) => void;
   onRestart: () => void;
+  /** restart our own run (solo / free mode), the R key */
+  onAgain: () => void;
   onTrack: (id: string) => void;
 }
 
@@ -183,6 +207,7 @@ export function mountRoomBar(
         display: flex; gap: 7.5px; align-items: center;
         font-family: "Avenir Next","Segoe UI",system-ui,sans-serif; font-size: 16.25px; color: #e8f1f7;
       }
+      #roombar > * { white-space: nowrap; flex: none; }
       #roombar .code {
         padding: 7.5px 12.5px; border-radius: 10px; background: rgba(17,34,58,0.85);
         font-family: ui-monospace, monospace; letter-spacing: 2.5px;
@@ -201,11 +226,25 @@ export function mountRoomBar(
       #roombar .seg { display: flex; }
       #roombar .seg button:first-child { border-radius: 10px 0 0 10px; }
       #roombar .seg button:last-child { border-radius: 0 10px 10px 0; border-left: 0; }
+      #roombar .short { display: none; }
+      /* phone in landscape: smaller, and short labels so the bar fits between the time and "Best" */
+      @media (max-height: 500px), (max-width: 760px) {
+        #roombar {
+          top: max(6px, env(safe-area-inset-top)); gap: 5px; font-size: 13px;
+          width: max-content; max-width: calc(100vw - 2 * max(150px, 22vw)); flex-wrap: wrap; justify-content: center;
+        }
+        #roombar button, #roombar select { font-size: 13px; padding: 5px 9px; border-radius: 8px; }
+        #roombar .code { padding: 5px 8px; letter-spacing: 1.5px; }
+        #roombar select { max-width: 130px; }
+        #roombar .long { display: none; }
+        #roombar .short { display: inline; }
+      }
     </style>
     <select id="rb-track" title="Pista"></select>
     <button id="rb-car" title="Escolher carro e cor (C)">Carro</button>
-    <button id="rb-mp">Multiplayer</button>
-    <span class="code" id="rb-code"></span>
+    <button id="rb-mp"><span class="long">Multiplayer</span><span class="short">Multi</span></button>
+    <button id="rb-again" title="Reiniciar (R)">↻</button>
+    <span class="code" id="rb-code"><span class="long">Sala </span><span id="rb-code-v"></span></span>
     <span class="seg" id="rb-modes">
       <button id="rb-free">Livre</button>
       <button id="rb-race">Corrida</button>
@@ -219,6 +258,8 @@ export function mountRoomBar(
   const mp = $("rb-mp"), code = $("rb-code"), modes = $("rb-modes");
   const free = $("rb-free"), race = $("rb-race");
   const restart = $("rb-restart") as HTMLButtonElement, leave = $("rb-leave");
+  const again = $("rb-again");
+  const codeVal = $("rb-code-v");
   const trackSel = $("rb-track") as HTMLSelectElement;
   for (const t of tracks) {
     const opt = new Option(t.error ? `${t.name} ⚠ inválida` : t.name, t.id);
@@ -245,6 +286,7 @@ export function mountRoomBar(
   on(free, () => actions.onMode("free"));
   on(race, () => actions.onMode("race"));
   on(restart, actions.onRestart);
+  on(again, actions.onAgain);
 
   const show = (el: HTMLElement, v: boolean) => (el.style.display = v ? "" : "none");
   let lastKey = "";
@@ -262,11 +304,13 @@ export function mountRoomBar(
       show(leave, s.inRoom);
       show(modes, s.inRoom && s.isHost);
       show(restart, s.inRoom && s.isHost && s.mode === "race");
-      code.textContent = `Sala ${s.code}`;
+      show(again, s.touch && !(s.inRoom && s.mode === "race")); // races restart together (host button above)
+      codeVal.textContent = s.code;
       free.classList.toggle("on", s.mode === "free");
       race.classList.toggle("on", s.mode === "race");
       restart.disabled = !s.canRestart;
-      restart.textContent = s.restartInS !== null && s.restartInS > 0 ? `Reiniciar corrida (${s.restartInS}s)` : "Reiniciar corrida";
+      const wait = s.restartInS !== null && s.restartInS > 0 ? ` (${s.restartInS}s)` : "";
+      restart.innerHTML = `<span class="long">Reiniciar corrida</span><span class="short">↻ Corrida</span>${wait}`;
       restart.title = s.canRestart ? "" : "Disponível 5 s depois de o 1º colocado terminar";
     },
   };

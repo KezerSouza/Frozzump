@@ -78,14 +78,37 @@ export function mountGarage(onPick: (look: Look) => void): GarageHandle {
         width: 100%; margin-top: 16px; border: 0; border-radius: 10px; padding: 12px;
         font-size: 14px; font-weight: 600; cursor: pointer; color: #07121f; background: #3da5ff;
       }
+      /* phone in landscape: little height → car on the left, colors on the right, everything on one screen */
+      @media (max-height: 500px) {
+        #garage .card { width: min(680px, 94vw); padding: 12px 16px; max-height: 96vh; max-height: 96dvh; }
+        #garage h1 { font-size: 16px; margin: 0 0 8px; }
+        #garage .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+        #garage .label { margin: 8px 0 6px; }
+        #garage .col:last-child .label { margin-top: 0; }
+        #garage .preview { height: min(96px, 24vh); }
+        #garage .models { gap: 6px; }
+        #garage .model { font-size: 12px; gap: 2px; padding-bottom: 5px; border-radius: 10px; }
+        #garage .model canvas { height: min(40px, 10vh); }
+        #garage .colors { gap: 6px; }
+        #garage .sw { aspect-ratio: auto; height: min(44px, 11vh); border-width: 2px; border-radius: 8px; }
+        #garage .sw.taken::after { font-size: 18px; border-radius: 6px; }
+        #garage .hint { display: none; }
+        #garage .done { margin-top: 10px; padding: 9px; }
+      }
     </style>
     <div class="card" role="dialog" aria-label="Escolher carro e cor">
       <h1>Seu carrinho</h1>
-      <canvas class="preview" id="gr-preview"></canvas>
-      <div class="label">Modelo</div>
-      <div class="models" id="gr-models"></div>
-      <div class="label">Cor</div>
-      <div class="colors" id="gr-colors"></div>
+      <div class="cols">
+        <div class="col">
+          <canvas class="preview" id="gr-preview"></canvas>
+          <div class="label">Modelo</div>
+          <div class="models" id="gr-models"></div>
+        </div>
+        <div class="col">
+          <div class="label">Cor</div>
+          <div class="colors" id="gr-colors"></div>
+        </div>
+      </div>
       <div class="hint" id="gr-hint"></div>
       <button class="done" id="gr-done">Pronto</button>
     </div>
@@ -167,7 +190,8 @@ export function mountGarage(onPick: (look: Look) => void): GarageHandle {
     root.style.display = "flex";
     lastKey = ""; // canvases need a size: draw now that the overlay is visible
     render();
-    done.focus();
+    // keyboard users: Enter closes. Not on a touch screen (it only draws a focus ring there), and never scroll to it
+    if (!window.matchMedia("(pointer: coarse)").matches) done.focus({ preventScroll: true });
   }
 
   done.addEventListener("click", close);
